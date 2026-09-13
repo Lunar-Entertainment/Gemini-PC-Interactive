@@ -151,13 +151,13 @@ class GeminiAgent:
             return
 
         try:
-            if oauth_token:
+            if api_key:
+                client = genai.Client(api_key=api_key)
+            elif oauth_token:
                 client = genai.Client(
                     api_key="oauth_bearer",
                     http_options=types.HttpOptions(headers={"Authorization": f"Bearer {oauth_token}"})
                 )
-            else:
-                client = genai.Client(api_key=api_key)
         except Exception as e:
             self.status = AgentStatus.ERROR
             self.emit("error", {"message": f"Failed to initialize Gemini Client: {str(e)}"})
