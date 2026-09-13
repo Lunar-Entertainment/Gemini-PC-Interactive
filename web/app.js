@@ -207,6 +207,12 @@
       case "alert":
       case "error":
         addFeedItem("error", "SYSTEM ALERT", data.message);
+        if (data.open_settings) {
+          showSettingsModal();
+          setTimeout(() => {
+            if (inputApiKey) inputApiKey.focus();
+          }, 350);
+        }
         break;
     }
   }

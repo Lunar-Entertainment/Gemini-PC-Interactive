@@ -6,6 +6,18 @@ import time
 import uvicorn
 from gemini_pc.config import settings
 
+import socket
+
+def find_available_port(host: str, start_port: int) -> int:
+    for port in range(start_port, start_port + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, port))
+                return port
+            except OSError:
+                continue
+    return start_port
+
 def open_browser():
     time.sleep(1.2)
     url = f"http://{settings.HOST}:{settings.PORT}"
@@ -16,6 +28,10 @@ def open_browser():
         pass
 
 def main():
+    # Detect available port
+    actual_port = find_available_port(settings.HOST, settings.PORT)
+    settings.PORT = actual_port
+
     print("=" * 60)
     print("       GEMINI PC INTERACTIVE - AI DESKTOP AGENT")
     print("=" * 60)

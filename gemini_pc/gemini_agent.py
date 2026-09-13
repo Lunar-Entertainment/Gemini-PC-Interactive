@@ -141,23 +141,25 @@ class GeminiAgent:
     def _run_loop(self, goal: str, model_name: str, require_approval: bool):
         from gemini_pc.google_oauth import oauth_manager
 
-        oauth_token = oauth_manager.get_valid_access_token() if oauth_manager.is_authenticated() else None
-        api_key = settings.GEMINI_API_KEY
+        oauth_profile = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
+        api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'") if settings.GEMINI_API_KEY else ""
 
-        if not api_key and not oauth_token:
+        if not api_key:
+            user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
+            email_info = f" ({user_email})" if user_email else ""
             self.status = AgentStatus.ERROR
-            self.emit("error", {"message": "No authentication configured. Please sign in with your Google One account via OAuth or set an API key in Settings."})
+            self.emit("error", {
+                "message": (
+                    f"Your Google One account{email_info} is connected! To interact with your PC, Google requires an AI Studio API key. "
+                    "Click the button in Settings to generate your free key under this account with 1 click."
+                ),
+                "open_settings": True
+            })
             self.emit("status_change", {"status": self.status.value})
             return
 
         try:
-            if api_key:
-                client = genai.Client(api_key=api_key)
-            elif oauth_token:
-                client = genai.Client(
-                    api_key="oauth_bearer",
-                    http_options=types.HttpOptions(headers={"Authorization": f"Bearer {oauth_token}"})
-                )
+            client = genai.Client(api_key=api_key)
         except Exception as e:
             self.status = AgentStatus.ERROR
             self.emit("error", {"message": f"Failed to initialize Gemini Client: {str(e)}"})
