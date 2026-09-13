@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini PC Interactive — Autonomous Desktop AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="header">
+      <div class="header-left">
+        <div class="logo-badge">
+          <div class="logo-glow"></div>
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="app-title">Gemini PC <span>Interactive</span></h1>
+          <p class="app-subtitle">Autonomous Multimodal Desktop Controller & Vision Agent</p>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div class="status-indicator-pill" id="agentStatusBadge">
+          <span class="status-dot"></span>
+          <span class="status-text" id="agentStatusText">IDLE</span>
+        </div>
+        <div class="system-pills">
+          <div class="sys-pill" id="pillResolution" title="Primary Display Resolution">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span id="statResolution">1920x1080</span>
+          </div>
+          <div class="sys-pill" id="pillCpu" title="System CPU Utilization">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+            <span id="statCpu">CPU: --%</span>
+          </div>
+          <div class="sys-pill" id="pillRam" title="RAM Usage">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M6 8V5M10 8V5M14 8V5M18 8V5M4 8h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z"/></svg>
+            <span id="statRam">RAM: --%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <button id="btnEmergencyStop" class="btn-emergency" title="Emergency Stop (Hotkey: ESC)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          Emergency Stop <span class="kbd">ESC</span>
+        </button>
+        <button id="btnSettingsModal" class="btn-icon" title="API Key & Settings">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content Workspace -->
+    <main class="main-content">
+      <!-- Left Panel: Live Desktop Viewport -->
+      <section class="viewport-card">
+        <div class="card-header">
+          <div class="card-title">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Live Desktop Viewport
+          </div>
+          <div class="viewport-controls">
+            <button id="btnToggleGrid" class="btn-chip active" title="Toggle Visual Coordinate Grid Overlay">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
+              Grid Assist
+            </button>
+            <button id="btnRefreshScreenshot" class="btn-chip" title="Capture Desktop Screenshot Now">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              Capture
+            </button>
+            <div class="coord-tag" id="liveMouseCoords">X: 0 | Y: 0</div>
+          </div>
+        </div>
+
+        <div class="viewport-canvas-wrapper" id="viewportWrapper">
+          <img id="desktopScreen" class="desktop-screen-img" src="/api/screenshot" alt="Desktop Screen Preview">
+          <div class="crosshair-marker" id="crosshairMarker"></div>
+          <div class="click-pulse" id="clickPulse"></div>
+        </div>
+
+        <!-- Quick Action Toolbar below viewport -->
+        <div class="quick-bar">
+          <span class="quick-label">Quick Launch:</span>
+          <button class="btn-quick" data-app="notepad">Notepad</button>
+          <button class="btn-quick" data-app="calc">Calculator</button>
+          <button class="btn-quick" data-app="chrome">Chrome</button>
+          <button class="btn-quick" data-app="msedge">Edge</button>
+          <button class="btn-quick" data-app="explorer">Explorer</button>
+          <button class="btn-quick" data-app="powershell">PowerShell</button>
+          <div class="active-window-label" id="lblActiveWindow" title="Active Window">
+            Active: <span id="valActiveWindow">None</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Right Panel: Agent Control & Cognitive Stream -->
+      <section class="agent-card">
+        <!-- Goal Input Form -->
+        <div class="goal-box">
+          <div class="goal-input-header">
+            <label for="inputGoal" class="goal-label">Objective for Gemini</label>
+            <div class="model-select-wrapper">
+              <select id="selectModel" class="model-select">
+                <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (Ultra Fast)</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="goal-input-container">
+            <textarea id="inputGoal" class="goal-textarea" rows="3" placeholder="E.g., Open Calculator and calculate 845 * 29, or Open Notepad and write a quick summary of my desktop..."></textarea>
+          </div>
+
+          <!-- Prompt Presets -->
+          <div class="prompt-chips">
+            <button class="chip" data-prompt="Open Calculator, compute 375 * 84, and tell me the result.">🧮 Compute in Calculator</button>
+            <button class="chip" data-prompt="Open Notepad, type 'Hello from Gemini PC Interactive!' and save it on Desktop as test.txt.">📝 Write Note in Notepad</button>
+            <button class="chip" data-prompt="List all currently open windows and report what is active.">🪟 Inspect Open Windows</button>
+            <button class="chip" data-prompt="Open browser, navigate to youtube.com and search for lofi beats.">🎵 Search YouTube</button>
+          </div>
+
+          <!-- Execution Controls -->
+          <div class="control-row">
+            <div class="toggle-group">
+              <label class="toggle-label" title="Require manual confirmation before each mouse or keyboard action">
+                <input type="checkbox" id="checkRequireApproval">
+                <span class="toggle-slider"></span>
+                <span class="toggle-text">Step-by-Step Approval</span>
+              </label>
+            </div>
+
+            <div class="btn-group">
+              <button id="btnStartAgent" class="btn-primary">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Execute Goal
+              </button>
+              <button id="btnPauseResume" class="btn-secondary" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                Pause
+              </button>
+              <button id="btnStopAgent" class="btn-danger" disabled>
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                Stop
+              </button>
+            </div>
+          </div>
+
+          <!-- Approval Banner (shown when awaiting approval) -->
+          <div class="approval-banner hidden" id="approvalBanner">
+            <div class="approval-details">
+              <span class="approval-tag">PENDING CONFIRMATION</span>
+              <div class="approval-action-text" id="approvalActionText">Gemini wants to: mouse_click(x=450, y=720)</div>
+            </div>
+            <div class="approval-buttons">
+              <button id="btnApprove" class="btn-approve">Approve & Execute</button>
+              <button id="btnReject" class="btn-reject">Skip Action</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cognitive Stream Feed -->
+        <div class="feed-container">
+          <div class="feed-header">
+            <div class="feed-title">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              Gemini Cognitive Stream & Actions
+            </div>
+            <div class="step-counter" id="stepCounter">Step: 0 / 30</div>
+            <button id="btnClearFeed" class="btn-text" title="Clear stream log">Clear</button>
+          </div>
+
+          <div class="feed-list" id="feedList">
+            <!-- Welcome placeholder item -->
+            <div class="feed-item system-card">
+              <div class="item-header">
+                <span class="badge badge-system">SYSTEM READY</span>
+                <span class="timestamp">Just now</span>
+              </div>
+              <div class="item-body">
+                Gemini PC Interactive is ready to control your desktop. Enter an objective above or click one of the quick presets to get started!
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Settings Modal -->
+    <div class="modal-backdrop hidden" id="settingsModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>Agent Settings & API Keys</h2>
+          <button id="btnCloseModal" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label for="inputApiKey">Google Gemini API Key</label>
+            <div class="input-with-action">
+              <input type="password" id="inputApiKey" placeholder="AIzaSy..." autocomplete="off">
+              <button id="btnToggleKeyVisibility" class="btn-chip" type="button">Show</button>
+            </div>
+            <p class="help-text">
+              Saved locally to <code>.env</code>. Get a free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label for="inputMaxSteps">Maximum Steps Per Task</label>
+            <input type="number" id="inputMaxSteps" min="5" max="100" value="30">
+          </div>
+
+          <div class="safety-box">
+            <h4>Safety & Kill-Switch Controls</h4>
+            <ul>
+              <li><strong>Corner Fail-Safe:</strong> Move your mouse forcefully into the top-left corner (0, 0) to immediately abort any action.</li>
+              <li><strong>Emergency Hotkey:</strong> Press <span class="kbd">ESC</span> on your keyboard at any moment to halt the agent loop.</li>
+              <li><strong>Step Approval Mode:</strong> Toggle "Step-by-Step Approval" to review every tool call before it happens.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button id="btnSaveSettings" class="btn-primary">Save Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
