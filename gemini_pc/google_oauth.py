@@ -25,6 +25,8 @@ class GoogleOAuthManager:
     def __init__(self):
         self._tokens: Optional[Dict[str, Any]] = None
         self.last_redirect_uri: str = ""
+        self.last_code_verifier: Optional[str] = None
+        self._states: Dict[str, Dict[str, str]] = {}
         self._load_tokens()
 
     def _load_tokens(self):
@@ -119,16 +121,26 @@ class GoogleOAuthManager:
             redirect_uri=redirect_uri
         )
 
-        auth_url, _ = flow.authorization_url(
+        auth_url, state = flow.authorization_url(
             access_type="offline",
             include_granted_scopes="true",
             prompt="consent"
         )
+
+        self.last_code_verifier = flow.code_verifier
+        if state:
+            self._states[state] = {
+                "redirect_uri": redirect_uri,
+                "code_verifier": flow.code_verifier or "",
+            }
+
         return auth_url
 
-    def handle_oauth_callback(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
+    def handle_oauth_callback(self, code: str, redirect_uri: Optional[str] = None, state: Optional[str] = None) -> Dict[str, Any]:
         client_id, client_secret = self.get_client_credentials()
-        eff_redirect_uri = redirect_uri or self.last_redirect_uri
+        saved = self._states.get(state, {}) if state else {}
+        eff_redirect_uri = redirect_uri or saved.get("redirect_uri") or self.last_redirect_uri
+        eff_code_verifier = saved.get("code_verifier") or self.last_code_verifier
 
         client_config = {
             "web": {
@@ -144,6 +156,9 @@ class GoogleOAuthManager:
             scopes=SCOPES,
             redirect_uri=eff_redirect_uri
         )
+        if eff_code_verifier:
+            flow.code_verifier = eff_code_verifier
+
         flow.fetch_token(code=code)
         creds = flow.credentials
 

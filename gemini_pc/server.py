@@ -102,7 +102,7 @@ async def google_login(request: Request, host: Optional[str] = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/auth/google/callback")
-async def google_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
+async def google_callback(request: Request, code: Optional[str] = None, state: Optional[str] = None, error: Optional[str] = None):
     if error:
         return HTMLResponse(f"""
         <div style="background:#090d16;color:#f8fafc;font-family:sans-serif;padding:40px;text-align:center;">
@@ -117,7 +117,7 @@ async def google_callback(request: Request, code: Optional[str] = None, error: O
     # Use the exact redirect_uri recorded when login was initiated
     redirect_uri = oauth_manager.last_redirect_uri or f"{request.base_url}api/auth/google/callback"
     try:
-        user_info = oauth_manager.handle_oauth_callback(code=code, redirect_uri=redirect_uri)
+        user_info = oauth_manager.handle_oauth_callback(code=code, redirect_uri=redirect_uri, state=state)
         email = user_info.get("email", "Google One User")
 
         # Broadcast update to web UI
