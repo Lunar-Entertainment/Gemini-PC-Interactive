@@ -478,6 +478,18 @@
     }
   }
 
+  // Copy URI buttons
+  document.querySelectorAll(".btn-copy-uri").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const uri = btn.getAttribute("data-uri");
+      navigator.clipboard.writeText(uri).then(() => {
+        const orig = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+      });
+    });
+  });
+
   if (btnToggleOauthConfig) {
     btnToggleOauthConfig.addEventListener("click", () => {
       oauthConfigForm.classList.toggle("hidden");

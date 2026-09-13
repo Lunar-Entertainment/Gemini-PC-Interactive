@@ -3,7 +3,7 @@ import json
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -84,13 +84,17 @@ async def get_status():
     }
 
 @app.get("/api/auth/google/login")
-async def google_login():
-    redirect_uri = f"http://{settings.HOST}:{settings.PORT}/api/auth/google/callback"
+async def google_login(request: Request, host: Optional[str] = None):
     if not oauth_manager.has_client_credentials():
         raise HTTPException(
             status_code=400,
             detail="Google OAuth Client ID & Secret are not configured yet. Please configure them in Settings."
         )
+
+    # Determine redirect host (defaulting to localhost or user specified host)
+    chosen_host = host or "localhost"
+    redirect_uri = f"http://{chosen_host}:{settings.PORT}/api/auth/google/callback"
+
     try:
         auth_url = oauth_manager.get_authorization_url(redirect_uri=redirect_uri)
         return RedirectResponse(auth_url)
@@ -98,13 +102,20 @@ async def google_login():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/auth/google/callback")
-async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
+async def google_callback(request: Request, code: Optional[str] = None, error: Optional[str] = None):
     if error:
-        return HTMLResponse(f"<h3>Google OAuth Error</h3><p>{error}</p>")
+        return HTMLResponse(f"""
+        <div style="background:#090d16;color:#f8fafc;font-family:sans-serif;padding:40px;text-align:center;">
+          <h2 style="color:#fb7185;">Google OAuth Error</h2>
+          <p>{error}</p>
+          <a href="/" style="color:#38bdf8;">Return to Dashboard</a>
+        </div>
+        """)
     if not code:
         return HTMLResponse("<h3>Error: Missing authorization code</h3>")
 
-    redirect_uri = f"http://{settings.HOST}:{settings.PORT}/api/auth/google/callback"
+    # Use the exact redirect_uri recorded when login was initiated
+    redirect_uri = oauth_manager.last_redirect_uri or f"{request.base_url}api/auth/google/callback"
     try:
         user_info = oauth_manager.handle_oauth_callback(code=code, redirect_uri=redirect_uri)
         email = user_info.get("email", "Google One User")

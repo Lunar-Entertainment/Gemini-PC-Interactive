@@ -26,6 +26,7 @@ class GoogleOAuthManager:
 
     def __init__(self):
         self._tokens: Optional[Dict[str, Any]] = None
+        self.last_redirect_uri: str = ""
         self._load_tokens()
 
     def _load_tokens(self):
@@ -103,6 +104,8 @@ class GoogleOAuthManager:
         if not client_id or not client_secret:
             raise ValueError("Google OAuth Client ID or Client Secret is missing. Please configure them in Settings.")
 
+        self.last_redirect_uri = redirect_uri
+
         client_config = {
             "web": {
                 "client_id": client_id,
@@ -125,8 +128,10 @@ class GoogleOAuthManager:
         )
         return auth_url
 
-    def handle_oauth_callback(self, code: str, redirect_uri: str) -> Dict[str, Any]:
+    def handle_oauth_callback(self, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         client_id, client_secret = self.get_client_credentials()
+        eff_redirect_uri = redirect_uri or self.last_redirect_uri
+
         client_config = {
             "web": {
                 "client_id": client_id,
@@ -139,7 +144,7 @@ class GoogleOAuthManager:
         flow = Flow.from_client_config(
             client_config,
             scopes=SCOPES,
-            redirect_uri=redirect_uri
+            redirect_uri=eff_redirect_uri
         )
         flow.fetch_token(code=code)
         creds = flow.credentials
