@@ -91,7 +91,10 @@
         hasApiKey = data.has_api_key;
         updateStatus(data.status);
         if (data.system_info) updateSystemStats(data.system_info);
-        if (data.google_account) {
+
+        if (data.google_oauth && data.google_oauth.authenticated) {
+          renderOauthProfile(data.google_oauth);
+        } else if (data.google_account) {
           statGoogleAccount.textContent = data.google_account;
           if (inputGoogleEmail) inputGoogleEmail.value = data.google_account;
         } else if (hasApiKey) {
@@ -99,9 +102,16 @@
         } else {
           statGoogleAccount.textContent = "AI Pro: Connect";
         }
+
         if (!hasApiKey) {
           showSettingsModal();
         }
+        break;
+
+      case "oauth_success":
+        hasApiKey = true;
+        renderOauthProfile(data);
+        addFeedItem("system", "GOOGLE ONE CONNECTED", `Signed in as ${data.email || "Google One User"} via OAuth.`);
         break;
 
       case "status_change":
@@ -438,6 +448,78 @@
     }
     hideSettingsModal();
   });
+
+  // OAuth UI elements
+  const oauthUserProfile = document.getElementById("oauthUserProfile");
+  const oauthLoginPrompt = document.getElementById("oauthLoginPrompt");
+  const oauthAvatar = document.getElementById("oauthAvatar");
+  const oauthUserName = document.getElementById("oauthUserName");
+  const oauthUserEmail = document.getElementById("oauthUserEmail");
+  const btnGoogleLogout = document.getElementById("btnGoogleLogout");
+  const btnToggleOauthConfig = document.getElementById("btnToggleOauthConfig");
+  const oauthConfigForm = document.getElementById("oauthConfigForm");
+  const inputOauthClientId = document.getElementById("inputOauthClientId");
+  const inputOauthClientSecret = document.getElementById("inputOauthClientSecret");
+  const btnSaveOauthCreds = document.getElementById("btnSaveOauthCreds");
+
+  function renderOauthProfile(profile) {
+    if (!profile || !profile.email) return;
+    if (oauthUserProfile) oauthUserProfile.classList.remove("hidden");
+    if (oauthLoginPrompt) oauthLoginPrompt.classList.add("hidden");
+    if (oauthUserName) oauthUserName.textContent = profile.name || "Google One User";
+    if (oauthUserEmail) oauthUserEmail.textContent = profile.email;
+    if (statGoogleAccount) statGoogleAccount.textContent = profile.email;
+    if (oauthAvatar) {
+      if (profile.picture) {
+        oauthAvatar.innerHTML = `<img src="${profile.picture}" style="width:100%;height:100%;border-radius:50%;" alt="avatar">`;
+      } else {
+        oauthAvatar.textContent = (profile.name || profile.email || "G").charAt(0).toUpperCase();
+      }
+    }
+  }
+
+  if (btnToggleOauthConfig) {
+    btnToggleOauthConfig.addEventListener("click", () => {
+      oauthConfigForm.classList.toggle("hidden");
+    });
+  }
+
+  if (btnSaveOauthCreds) {
+    btnSaveOauthCreds.addEventListener("click", async () => {
+      const cid = inputOauthClientId.value.trim();
+      const csec = inputOauthClientSecret.value.trim();
+      if (!cid || !csec) {
+        alert("Please enter both Client ID and Client Secret.");
+        return;
+      }
+      try {
+        const res = await fetch("/api/auth/google/credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ client_id: cid, client_secret: csec })
+        });
+        if (res.ok) {
+          alert("Google OAuth credentials saved! You can now click 'Sign in with Google'.");
+          oauthConfigForm.classList.add("hidden");
+        } else {
+          const err = await res.json();
+          alert("Error saving credentials: " + (err.detail || "Unknown error"));
+        }
+      } catch (err) {
+        alert("Request error: " + err.message);
+      }
+    });
+  }
+
+  if (btnGoogleLogout) {
+    btnGoogleLogout.addEventListener("click", async () => {
+      await fetch("/api/auth/google/logout", { method: "POST" });
+      oauthUserProfile.classList.add("hidden");
+      oauthLoginPrompt.classList.remove("hidden");
+      statGoogleAccount.textContent = "AI Pro: Connect";
+      addFeedItem("system", "LOGGED OUT", "Disconnected Google account.");
+    });
+  }
 
   if (pillGoogleOne) {
     pillGoogleOne.addEventListener("click", showSettingsModal);

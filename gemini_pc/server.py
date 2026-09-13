@@ -2,7 +2,7 @@ import os
 import json
 import asyncio
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -54,27 +54,145 @@ async def startup_event():
     global main_loop
     main_loop = asyncio.get_running_loop()
 
+from fastapi.responses import FileResponse, Response, RedirectResponse, HTMLResponse
+from gemini_pc.google_oauth import oauth_manager
+
+class GoogleOAuthCredsRequest(BaseModel):
+    client_id: str
+    client_secret: str
+
 @app.get("/api/status")
 async def get_status():
     sys_info = controller.get_system_info()
+    oauth_profile = oauth_manager.get_user_profile()
+    is_authed = bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated()
+    user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
+
     return {
         "status": agent.status.value,
         "current_goal": agent.current_goal,
         "current_step": agent.current_step,
         "max_steps": agent.max_steps,
-        "has_api_key": bool(settings.GEMINI_API_KEY),
+        "has_api_key": is_authed,
+        "auth_type": "oauth" if oauth_manager.is_authenticated() else ("api_key" if settings.GEMINI_API_KEY else "none"),
         "default_model": settings.DEFAULT_MODEL,
-        "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
+        "google_account": user_email,
+        "google_oauth": oauth_profile,
+        "has_oauth_creds": oauth_manager.has_client_credentials(),
         "is_google_one": settings.IS_GOOGLE_ONE,
         "system_info": sys_info,
     }
+
+@app.get("/api/auth/google/login")
+async def google_login():
+    redirect_uri = f"http://{settings.HOST}:{settings.PORT}/api/auth/google/callback"
+    if not oauth_manager.has_client_credentials():
+        raise HTTPException(
+            status_code=400,
+            detail="Google OAuth Client ID & Secret are not configured yet. Please configure them in Settings."
+        )
+    try:
+        auth_url = oauth_manager.get_authorization_url(redirect_uri=redirect_uri)
+        return RedirectResponse(auth_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/auth/google/callback")
+async def google_callback(code: Optional[str] = None, error: Optional[str] = None):
+    if error:
+        return HTMLResponse(f"<h3>Google OAuth Error</h3><p>{error}</p>")
+    if not code:
+        return HTMLResponse("<h3>Error: Missing authorization code</h3>")
+
+    redirect_uri = f"http://{settings.HOST}:{settings.PORT}/api/auth/google/callback"
+    try:
+        user_info = oauth_manager.handle_oauth_callback(code=code, redirect_uri=redirect_uri)
+        email = user_info.get("email", "Google One User")
+
+        # Broadcast update to web UI
+        broadcast_sync({
+            "type": "oauth_success",
+            "data": {
+                "email": email,
+                "name": user_info.get("name", ""),
+                "picture": user_info.get("picture", ""),
+            }
+        })
+
+        return HTMLResponse(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Google One Connected</title>
+          <style>
+            body {{
+              background: #090d16;
+              color: #f8fafc;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              height: 100vh;
+              margin: 0;
+            }}
+            .card {{
+              background: #1e293b;
+              padding: 32px 40px;
+              border-radius: 16px;
+              border: 1px solid rgba(99, 102, 241, 0.4);
+              box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+              text-align: center;
+              max-width: 420px;
+            }}
+            h2 {{ color: #38bdf8; margin-bottom: 12px; }}
+            p {{ color: #94a3b8; font-size: 14px; line-height: 1.5; }}
+            .btn {{
+              display: inline-block;
+              margin-top: 20px;
+              padding: 10px 20px;
+              background: linear-gradient(135deg, #38bdf8, #818cf8);
+              color: #fff;
+              text-decoration: none;
+              border-radius: 8px;
+              font-weight: 600;
+              font-size: 14px;
+            }}
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <h2>Google One Connected!</h2>
+            <p>Signed in as <strong>{email}</strong>.</p>
+            <p>Your Google One AI Pro plan is now authenticated with Gemini PC Interactive.</p>
+            <a href="/" class="btn">Return to Dashboard</a>
+          </div>
+          <script>
+            setTimeout(() => {{ window.location.href = "/"; }}, 1800);
+          </script>
+        </body>
+        </html>
+        """)
+    except Exception as e:
+        return HTMLResponse(f"<h3>OAuth Error</h3><p>{str(e)}</p>")
+
+@app.post("/api/auth/google/credentials")
+async def save_oauth_credentials(req: GoogleOAuthCredsRequest):
+    if not req.client_id.strip() or not req.client_secret.strip():
+        raise HTTPException(status_code=400, detail="Client ID and Secret cannot be empty.")
+    oauth_manager.set_client_credentials(req.client_id, req.client_secret)
+    return {"success": True, "has_oauth_creds": oauth_manager.has_client_credentials()}
+
+@app.post("/api/auth/google/logout")
+async def google_logout():
+    oauth_manager.logout()
+    return {"success": True}
 
 @app.post("/api/api-key")
 async def set_api_key(req: ApiKeyRequest):
     settings.update_api_key(req.api_key, email=req.email)
     return {
         "success": True,
-        "has_api_key": bool(settings.GEMINI_API_KEY),
+        "has_api_key": bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated(),
         "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
     }
 
