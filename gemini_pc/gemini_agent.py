@@ -238,9 +238,26 @@ class GeminiAgent:
                     config=gen_config,
                 )
             except Exception as e:
-                self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {str(e)}"})
-                self.status = AgentStatus.ERROR
-                break
+                err_msg = str(e)
+                # Handle model name fallback if specific experimental preview name differs
+                if "404" in err_msg or "not found" in err_msg.lower():
+                    fallback_model = "gemini-2.5-flash"
+                    self.emit("log", {"level": "warning", "message": f"Model '{model_name}' not available on current endpoint, trying fallback '{fallback_model}'..."})
+                    try:
+                        response = client.models.generate_content(
+                            model=fallback_model,
+                            contents=full_contents,
+                            config=gen_config,
+                        )
+                        model_name = fallback_model
+                    except Exception as e2:
+                        self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {str(e2)}"})
+                        self.status = AgentStatus.ERROR
+                        break
+                else:
+                    self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {err_msg}"})
+                    self.status = AgentStatus.ERROR
+                    break
 
             # Extract reasoning text and function calls
             thought_text = ""

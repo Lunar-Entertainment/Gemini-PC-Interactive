@@ -32,6 +32,10 @@
           <span class="status-text" id="agentStatusText">IDLE</span>
         </div>
         <div class="system-pills">
+          <div class="sys-pill google-one-pill" id="pillGoogleOne" title="Google One AI Pro Status">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            <span id="statGoogleAccount">AI Pro: Connect</span>
+          </div>
           <div class="sys-pill" id="pillResolution" title="Primary Display Resolution">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             <span id="statResolution">1920x1080</span>
@@ -111,8 +115,10 @@
             <label for="inputGoal" class="goal-label">Objective for Gemini</label>
             <div class="model-select-wrapper">
               <select id="selectModel" class="model-select">
-                <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (Ultra Fast)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Reasoning)</option>
+                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Google AI Pro)</option>
+                <option value="gemini-3.8-pro">Gemini 3.8 Pro (Google AI Pro)</option>
+                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                 <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
               </select>
             </div>
@@ -204,14 +210,39 @@
           <button id="btnCloseModal" class="btn-close">&times;</button>
         </div>
         <div class="modal-body">
+          <!-- Google One AI Pro Banner -->
+          <div class="google-one-banner">
+            <div class="g-one-icon">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            </div>
+            <div class="g-one-text">
+              <h4>Google One AI Pro / Premium Subscription</h4>
+              <p>Your Google One AI Pro subscription gives you full access to Gemini Advanced, Gemini 3.8, and Google AI Studio! To connect your PC controller to your Google One plan:</p>
+              <ol>
+                <li>Click the button below to open Google AI Studio in your browser while signed into your Google One account.</li>
+                <li>Click <strong>"Create API Key"</strong> (free under your Google account).</li>
+                <li>Paste the key into the box below.</li>
+              </ol>
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" class="btn-g-one">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                Open Google AI Studio (Get My Key)
+              </a>
+            </div>
+          </div>
+
           <div class="form-group">
-            <label for="inputApiKey">Google Gemini API Key</label>
+            <label for="inputGoogleEmail">Your Google Account Email (Optional)</label>
+            <input type="email" id="inputGoogleEmail" placeholder="your.name@gmail.com">
+          </div>
+
+          <div class="form-group">
+            <label for="inputApiKey">Google Gemini API Key (Linked to your Google One Account)</label>
             <div class="input-with-action">
               <input type="password" id="inputApiKey" placeholder="AIzaSy..." autocomplete="off">
               <button id="btnToggleKeyVisibility" class="btn-chip" type="button">Show</button>
             </div>
             <p class="help-text">
-              Saved locally to <code>.env</code>. Get a free API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">Google AI Studio</a>.
+              Saved locally to <code>.env</code>. Enables Gemini 3.8 Flash, 3.8 Pro, 2.5 Flash and vision models.
             </p>
           </div>
 

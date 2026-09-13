@@ -14,6 +14,9 @@
   const statCpu = document.getElementById("statCpu");
   const statRam = document.getElementById("statRam");
   const valActiveWindow = document.getElementById("valActiveWindow");
+  const statGoogleAccount = document.getElementById("statGoogleAccount");
+  const pillGoogleOne = document.getElementById("pillGoogleOne");
+  const inputGoogleEmail = document.getElementById("inputGoogleEmail");
 
   const desktopScreen = document.getElementById("desktopScreen");
   const viewportWrapper = document.getElementById("viewportWrapper");
@@ -88,6 +91,14 @@
         hasApiKey = data.has_api_key;
         updateStatus(data.status);
         if (data.system_info) updateSystemStats(data.system_info);
+        if (data.google_account) {
+          statGoogleAccount.textContent = data.google_account;
+          if (inputGoogleEmail) inputGoogleEmail.value = data.google_account;
+        } else if (hasApiKey) {
+          statGoogleAccount.textContent = "AI Pro: Active";
+        } else {
+          statGoogleAccount.textContent = "AI Pro: Connect";
+        }
         if (!hasApiKey) {
           showSettingsModal();
         }
@@ -410,16 +421,27 @@
 
   btnSaveSettings.addEventListener("click", async () => {
     const key = inputApiKey.value.trim();
+    const email = inputGoogleEmail ? inputGoogleEmail.value.trim() : "";
     if (key) {
-      await fetch("/api/api-key", {
+      const res = await fetch("/api/api-key", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: key })
+        body: JSON.stringify({ api_key: key, email: email })
       });
+      const data = await res.json();
       hasApiKey = true;
+      if (email) {
+        statGoogleAccount.textContent = email;
+      } else {
+        statGoogleAccount.textContent = "AI Pro: Active";
+      }
     }
     hideSettingsModal();
   });
+
+  if (pillGoogleOne) {
+    pillGoogleOne.addEventListener("click", showSettingsModal);
+  }
 
   function sendWs(data) {
     if (ws && ws.readyState === WebSocket.OPEN) {

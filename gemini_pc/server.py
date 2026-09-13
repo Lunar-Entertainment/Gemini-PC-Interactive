@@ -28,6 +28,7 @@ class GoalRequest(BaseModel):
 
 class ApiKeyRequest(BaseModel):
     api_key: str
+    email: str = ""
 
 class ManualActionRequest(BaseModel):
     action: str
@@ -63,13 +64,19 @@ async def get_status():
         "max_steps": agent.max_steps,
         "has_api_key": bool(settings.GEMINI_API_KEY),
         "default_model": settings.DEFAULT_MODEL,
+        "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
+        "is_google_one": settings.IS_GOOGLE_ONE,
         "system_info": sys_info,
     }
 
 @app.post("/api/api-key")
 async def set_api_key(req: ApiKeyRequest):
-    settings.update_api_key(req.api_key)
-    return {"success": True, "has_api_key": bool(settings.GEMINI_API_KEY)}
+    settings.update_api_key(req.api_key, email=req.email)
+    return {
+        "success": True,
+        "has_api_key": bool(settings.GEMINI_API_KEY),
+        "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
+    }
 
 @app.get("/api/screenshot")
 async def get_screenshot(grid: bool = False):
