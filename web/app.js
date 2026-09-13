@@ -43,6 +43,9 @@
 
   const btnToggleGrid = document.getElementById("btnToggleGrid");
   const btnRefreshScreenshot = document.getElementById("btnRefreshScreenshot");
+  const btnToggleStream = document.getElementById("btnToggleStream");
+  const selectFps = document.getElementById("selectFps");
+  let isStreaming = true;
 
   const settingsModal = document.getElementById("settingsModal");
   const btnSettingsModal = document.getElementById("btnSettingsModal");
@@ -51,6 +54,26 @@
   const btnToggleKeyVisibility = document.getElementById("btnToggleKeyVisibility");
   const btnSaveSettings = document.getElementById("btnSaveSettings");
   const inputMaxSteps = document.getElementById("inputMaxSteps");
+
+  // Live Stream Control
+  function startStream() {
+    isStreaming = true;
+    if (btnToggleStream) {
+      btnToggleStream.classList.add("active");
+      btnToggleStream.innerHTML = '<span class="stream-dot"></span> Live Stream';
+    }
+    const fps = selectFps ? selectFps.value : 4;
+    desktopScreen.src = `/api/stream?fps=${fps}&t=${Date.now()}`;
+  }
+
+  function pauseStream() {
+    isStreaming = false;
+    if (btnToggleStream) {
+      btnToggleStream.classList.remove("active");
+      btnToggleStream.innerHTML = '<span class="stream-dot" style="background:#94a3b8;box-shadow:none;"></span> Stream Paused';
+    }
+    desktopScreen.src = `/api/screenshot?grid=${isGridActive ? 1 : 0}&t=${Date.now()}`;
+  }
 
   // Connect WebSocket
   function connectWebSocket() {
@@ -93,17 +116,18 @@
         if (data.system_info) updateSystemStats(data.system_info);
 
         if (data.google_oauth && data.google_oauth.authenticated) {
+          hasApiKey = true;
           renderOauthProfile(data.google_oauth);
+          hideSettingsModal();
         } else if (data.google_account) {
           statGoogleAccount.textContent = data.google_account;
           if (inputGoogleEmail) inputGoogleEmail.value = data.google_account;
+          hideSettingsModal();
         } else if (hasApiKey) {
           statGoogleAccount.textContent = "AI Pro: Active";
+          hideSettingsModal();
         } else {
           statGoogleAccount.textContent = "AI Pro: Connect";
-        }
-
-        if (!hasApiKey) {
           showSettingsModal();
         }
         break;
@@ -111,6 +135,7 @@
       case "oauth_success":
         hasApiKey = true;
         renderOauthProfile(data);
+        hideSettingsModal();
         addFeedItem("system", "GOOGLE ONE CONNECTED", `Signed in as ${data.email || "Google One User"} via OAuth.`);
         break;
 
@@ -533,6 +558,24 @@
     });
   }
 
+  if (btnToggleStream) {
+    btnToggleStream.addEventListener("click", () => {
+      if (isStreaming) {
+        pauseStream();
+      } else {
+        startStream();
+      }
+    });
+  }
+
+  if (selectFps) {
+    selectFps.addEventListener("change", () => {
+      if (isStreaming) {
+        startStream();
+      }
+    });
+  }
+
   if (pillGoogleOne) {
     pillGoogleOne.addEventListener("click", showSettingsModal);
   }
@@ -554,6 +597,15 @@
     }
   }, 4000);
 
+  // Pre-fetch status REST API immediately so login status is remembered instantly
+  fetch("/api/status")
+    .then(r => r.json())
+    .then(data => {
+      handleServerMessage({ type: "init", data: data });
+    })
+    .catch(() => {});
+
   // Initialize
   connectWebSocket();
+  startStream();
 })();

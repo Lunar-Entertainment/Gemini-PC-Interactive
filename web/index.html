@@ -74,13 +74,23 @@
             Live Desktop Viewport
           </div>
           <div class="viewport-controls">
-            <button id="btnToggleGrid" class="btn-chip active" title="Toggle Visual Coordinate Grid Overlay">
+            <button id="btnToggleStream" class="btn-chip active" title="Toggle Real-Time Desktop Stream">
+              <span class="stream-dot"></span>
+              Live Stream
+            </button>
+            <select id="selectFps" class="fps-select" title="Stream Frame Rate">
+              <option value="6">6 FPS</option>
+              <option value="4" selected>4 FPS</option>
+              <option value="2">2 FPS</option>
+              <option value="1">1 FPS</option>
+            </select>
+            <button id="btnToggleGrid" class="btn-chip" title="Toggle Visual Coordinate Grid Overlay">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
               Grid Assist
             </button>
-            <button id="btnRefreshScreenshot" class="btn-chip" title="Capture Desktop Screenshot Now">
+            <button id="btnRefreshScreenshot" class="btn-chip" title="Capture Desktop Snapshot">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-              Capture
+              Snapshot
             </button>
             <div class="coord-tag" id="liveMouseCoords">X: 0 | Y: 0</div>
           </div>

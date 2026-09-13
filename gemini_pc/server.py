@@ -54,7 +54,7 @@ async def startup_event():
     global main_loop
     main_loop = asyncio.get_running_loop()
 
-from fastapi.responses import FileResponse, Response, RedirectResponse, HTMLResponse
+from fastapi.responses import FileResponse, Response, RedirectResponse, HTMLResponse, StreamingResponse
 from gemini_pc.google_oauth import oauth_manager
 
 class GoogleOAuthCredsRequest(BaseModel):
@@ -215,6 +215,27 @@ async def get_screenshot(grid: bool = False):
     jpeg_bytes, _ = VisualGrounding.optimize_image(img, max_width=1600, quality=85)
     return Response(content=jpeg_bytes, media_type="image/jpeg")
 
+async def mjpeg_generator(fps: int = 4):
+    interval = 1.0 / max(1, min(fps, 15))
+    while True:
+        try:
+            img = controller.take_screenshot()
+            jpeg_bytes, _ = VisualGrounding.optimize_image(img, max_width=1280, quality=65)
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+            )
+            await asyncio.sleep(interval)
+        except Exception:
+            await asyncio.sleep(0.5)
+
+@app.get("/api/stream")
+async def stream_desktop(fps: int = 4):
+    return StreamingResponse(
+        mjpeg_generator(fps=fps),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
 @app.post("/api/start")
 async def start_task(req: GoalRequest):
     if not req.goal.strip():
@@ -281,9 +302,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.append(websocket)
 
-    # Send initial state and screenshot
+    # Send complete initial state
     try:
         sys_info = controller.get_system_info()
+        oauth_profile = oauth_manager.get_user_profile()
+        is_authed = bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated()
+        user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
+
         await websocket.send_text(json.dumps({
             "type": "init",
             "timestamp": 0,
@@ -292,7 +317,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 "goal": agent.current_goal,
                 "step": agent.current_step,
                 "max_steps": agent.max_steps,
-                "has_api_key": bool(settings.GEMINI_API_KEY),
+                "has_api_key": is_authed,
+                "auth_type": "oauth" if oauth_manager.is_authenticated() else ("api_key" if settings.GEMINI_API_KEY else "none"),
+                "default_model": settings.DEFAULT_MODEL,
+                "google_account": user_email,
+                "google_oauth": oauth_profile,
+                "has_oauth_creds": oauth_manager.has_client_credentials(),
+                "is_google_one": settings.IS_GOOGLE_ONE,
                 "system_info": sys_info,
             }
         }))

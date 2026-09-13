@@ -86,9 +86,13 @@ class GoogleOAuthManager:
         return bool(cid and csecret)
 
     def is_authenticated(self) -> bool:
+        if not self._tokens:
+            self._load_tokens()
         return self._tokens is not None and bool(self._tokens.get("access_token") or self._tokens.get("refresh_token"))
 
     def get_user_profile(self) -> Dict[str, Any]:
+        if not self._tokens:
+            self._load_tokens()
         if not self._tokens:
             return {"authenticated": False}
         return {
