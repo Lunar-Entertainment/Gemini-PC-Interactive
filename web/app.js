@@ -2,7 +2,7 @@
 (function () {
   let ws = null;
   let agentStatus = "IDLE";
-  let hasApiKey = false;
+  let isAuthenticated = false;
   let screenNaturalWidth = 1920;
   let screenNaturalHeight = 1080;
   let isGridActive = true;
@@ -50,8 +50,7 @@
   const settingsModal = document.getElementById("settingsModal");
   const btnSettingsModal = document.getElementById("btnSettingsModal");
   const btnCloseModal = document.getElementById("btnCloseModal");
-  const inputApiKey = document.getElementById("inputApiKey");
-  const btnToggleKeyVisibility = document.getElementById("btnToggleKeyVisibility");
+
   const btnSaveSettings = document.getElementById("btnSaveSettings");
   const inputMaxSteps = document.getElementById("inputMaxSteps");
 
@@ -111,19 +110,19 @@
 
     switch (type) {
       case "init":
-        hasApiKey = data.has_api_key;
+        isAuthenticated = Boolean(data.authenticated || data.has_api_key || (data.google_oauth && data.google_oauth.authenticated));
         updateStatus(data.status);
         if (data.system_info) updateSystemStats(data.system_info);
 
         if (data.google_oauth && data.google_oauth.authenticated) {
-          hasApiKey = true;
+          isAuthenticated = true;
           renderOauthProfile(data.google_oauth);
           hideSettingsModal();
         } else if (data.google_account) {
           statGoogleAccount.textContent = data.google_account;
           if (inputGoogleEmail) inputGoogleEmail.value = data.google_account;
           hideSettingsModal();
-        } else if (hasApiKey) {
+        } else if (isAuthenticated) {
           statGoogleAccount.textContent = "AI Pro: Active";
           hideSettingsModal();
         } else {
@@ -133,7 +132,7 @@
         break;
 
       case "oauth_success":
-        hasApiKey = true;
+        isAuthenticated = true;
         renderOauthProfile(data);
         hideSettingsModal();
         addFeedItem("system", "GOOGLE ONE CONNECTED", `Signed in as ${data.email || "Google One User"} via OAuth.`);
@@ -200,8 +199,7 @@
         break;
 
       case "key_updated":
-        hasApiKey = data.has_api_key;
-        addFeedItem("system", "API KEY UPDATED", "Gemini API key has been updated successfully.");
+        isAuthenticated = Boolean(data.authenticated);
         break;
 
       case "alert":
@@ -209,9 +207,6 @@
         addFeedItem("error", "SYSTEM ALERT", data.message);
         if (data.open_settings) {
           showSettingsModal();
-          setTimeout(() => {
-            if (inputApiKey) inputApiKey.focus();
-          }, 350);
         }
         break;
     }
@@ -359,7 +354,7 @@
       inputGoal.focus();
       return;
     }
-    if (!hasApiKey) {
+    if (!isAuthenticated) {
       showSettingsModal();
       return;
     }
@@ -450,33 +445,7 @@
   btnSettingsModal.addEventListener("click", showSettingsModal);
   btnCloseModal.addEventListener("click", hideSettingsModal);
 
-  btnToggleKeyVisibility.addEventListener("click", () => {
-    if (inputApiKey.type === "password") {
-      inputApiKey.type = "text";
-      btnToggleKeyVisibility.textContent = "Hide";
-    } else {
-      inputApiKey.type = "password";
-      btnToggleKeyVisibility.textContent = "Show";
-    }
-  });
-
-  btnSaveSettings.addEventListener("click", async () => {
-    const key = inputApiKey.value.trim();
-    const email = inputGoogleEmail ? inputGoogleEmail.value.trim() : "";
-    if (key) {
-      const res = await fetch("/api/api-key", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: key, email: email })
-      });
-      const data = await res.json();
-      hasApiKey = true;
-      if (email) {
-        statGoogleAccount.textContent = email;
-      } else {
-        statGoogleAccount.textContent = "AI Pro: Active";
-      }
-    }
+  btnSaveSettings.addEventListener("click", () => {
     hideSettingsModal();
   });
 
@@ -557,6 +526,7 @@
   if (btnGoogleLogout) {
     btnGoogleLogout.addEventListener("click", async () => {
       await fetch("/api/auth/google/logout", { method: "POST" });
+      isAuthenticated = false;
       oauthUserProfile.classList.add("hidden");
       oauthLoginPrompt.classList.remove("hidden");
       statGoogleAccount.textContent = "AI Pro: Connect";

@@ -36,8 +36,10 @@ def main():
     print("       GEMINI PC INTERACTIVE - AI DESKTOP AGENT")
     print("=" * 60)
     print(f"Host: {settings.HOST} | Port: {settings.PORT}")
-    print(f"Default Model: {settings.DEFAULT_MODEL}")
-    print(f"API Key Configured: {bool(settings.GEMINI_API_KEY)}")
+    from gemini_pc.google_oauth import oauth_manager
+    user_prof = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
+    auth_label = f"Connected ({user_prof.get('email', 'Active')})" if oauth_manager.is_authenticated() else "Not Connected (Sign in via Settings)"
+    print(f"Google One Account: {auth_label}")
     print("=" * 60)
 
     # Launch browser automatically

@@ -23,7 +23,7 @@ main_loop: asyncio.AbstractEventLoop = None
 
 class GoalRequest(BaseModel):
     goal: str
-    model: str = "gemini-3.6-flash"
+    model: str = "gemini-3.1-flash-lite"
     require_approval: bool = False
 
 class ApiKeyRequest(BaseModel):
@@ -65,7 +65,7 @@ class GoogleOAuthCredsRequest(BaseModel):
 async def get_status():
     sys_info = controller.get_system_info()
     oauth_profile = oauth_manager.get_user_profile()
-    is_authed = bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated()
+    is_authed = oauth_manager.is_authenticated()
     user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
 
     return {
@@ -73,8 +73,9 @@ async def get_status():
         "current_goal": agent.current_goal,
         "current_step": agent.current_step,
         "max_steps": agent.max_steps,
+        "authenticated": is_authed,
         "has_api_key": is_authed,
-        "auth_type": "oauth" if oauth_manager.is_authenticated() else ("api_key" if settings.GEMINI_API_KEY else "none"),
+        "auth_type": "oauth" if is_authed else "none",
         "default_model": settings.DEFAULT_MODEL,
         "google_account": user_email,
         "google_oauth": oauth_profile,
@@ -199,11 +200,11 @@ async def google_logout():
     return {"success": True}
 
 @app.post("/api/api-key")
-async def set_api_key(req: ApiKeyRequest):
-    settings.update_api_key(req.api_key, email=req.email)
+async def set_api_key():
     return {
         "success": True,
-        "has_api_key": bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated(),
+        "authenticated": oauth_manager.is_authenticated(),
+        "has_api_key": oauth_manager.is_authenticated(),
         "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
     }
 
@@ -306,7 +307,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         sys_info = controller.get_system_info()
         oauth_profile = oauth_manager.get_user_profile()
-        is_authed = bool(settings.GEMINI_API_KEY) or oauth_manager.is_authenticated()
+        is_authed = oauth_manager.is_authenticated()
         user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
 
         await websocket.send_text(json.dumps({
@@ -317,8 +318,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 "goal": agent.current_goal,
                 "step": agent.current_step,
                 "max_steps": agent.max_steps,
+                "authenticated": is_authed,
                 "has_api_key": is_authed,
-                "auth_type": "oauth" if oauth_manager.is_authenticated() else ("api_key" if settings.GEMINI_API_KEY else "none"),
+                "auth_type": "oauth" if is_authed else "none",
                 "default_model": settings.DEFAULT_MODEL,
                 "google_account": user_email,
                 "google_oauth": oauth_profile,
@@ -368,11 +370,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         "data": sys_info
                     }))
                 elif action == "update_key":
-                    new_key = msg.get("api_key", "")
-                    settings.update_api_key(new_key)
                     await websocket.send_text(json.dumps({
                         "type": "key_updated",
-                        "data": {"has_api_key": bool(settings.GEMINI_API_KEY)}
+                        "data": {"authenticated": oauth_manager.is_authenticated(), "has_api_key": oauth_manager.is_authenticated()}
                     }))
                 elif action == "toggle_grid":
                     settings.GRID_OVERLAY = not settings.GRID_OVERLAY

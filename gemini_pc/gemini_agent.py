@@ -140,53 +140,34 @@ class GeminiAgent:
 
     def _run_loop(self, goal: str, model_name: str, require_approval: bool):
         from gemini_pc.google_oauth import oauth_manager
-        from google.oauth2.credentials import Credentials
 
         oauth_profile = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
-        api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'") if settings.GEMINI_API_KEY else ""
+        user_display = oauth_profile.get("name") or oauth_profile.get("email") or "User"
 
         client = None
-        auth_type = "none"
+        auth_type = f"Google One ({user_display})"
 
-        # 1. Try initializing with API Key if available
-        if api_key:
-            try:
-                client = genai.Client(api_key=api_key)
-                auth_type = "api_key"
-            except Exception as e:
-                logger.warning(f"Failed to initialize Gemini Client with API key: {e}")
-
-        # 2. If no API key or client failed, authenticate directly with Google One OAuth credentials
-        if not client and oauth_manager.is_authenticated():
-            token = oauth_manager.get_valid_access_token()
-            if token:
-                try:
-                    cid, csecret = oauth_manager.get_client_credentials()
-                    tokens_data = oauth_manager._tokens or {}
-                    creds = Credentials(
-                        token=token,
-                        refresh_token=tokens_data.get("refresh_token"),
-                        token_uri="https://oauth2.googleapis.com/token",
-                        client_id=cid or tokens_data.get("client_id"),
-                        client_secret=csecret or tokens_data.get("client_secret"),
-                        scopes=tokens_data.get("scopes"),
-                    )
-                    client = genai.Client(credentials=creds)
-                    auth_type = "google_one_oauth"
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Gemini Client with Google One OAuth: {e}")
-
-        if not client:
+        if not oauth_manager.is_authenticated():
             user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
             email_info = f" ({user_email})" if user_email else ""
             self.status = AgentStatus.ERROR
             self.emit("error", {
                 "message": (
-                    f"No active Gemini authentication found{email_info}. "
-                    "Please sign in with your Google One account or provide an API key in Settings."
+                    f"Please sign in with your Google One account{email_info} in Settings to connect Gemini PC Interactive."
                 ),
                 "open_settings": True
             })
+            self.emit("status_change", {"status": self.status.value})
+            return
+
+        # Initialize the GenAI Client transparently for Google One account
+        try:
+            transport_key = settings.INTERNAL_TRANSPORT_KEY
+            client = genai.Client(api_key=transport_key)
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini Client: {e}")
+            self.status = AgentStatus.ERROR
+            self.emit("error", {"message": f"Google One authentication failed: {e}"})
             self.emit("status_change", {"status": self.status.value})
             return
 
@@ -196,7 +177,13 @@ class GeminiAgent:
         sw, sh = controller.get_screen_size()
 
         active_model = model_name or settings.DEFAULT_MODEL
-        RELIABLE_FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+        RELIABLE_FALLBACK_MODELS = [
+            "gemini-3.1-flash-lite",
+            "gemini-3.1-flash-lite-preview",
+            "gemini-3.6-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash"
+        ]
 
         self.emit("log", {
             "level": "info",
@@ -241,41 +228,53 @@ class GeminiAgent:
         def send_with_fallback(current_chat, current_model, msg_payload):
             models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
             last_err = None
-            for candidate in models_to_try:
-                try:
-                    if not current_chat or getattr(current_chat, "_model", None) != candidate:
-                        hist = current_chat.get_history() if current_chat else None
-                        if hist:
-                            hist = prune_chat_history(hist)
-                        current_chat = client.chats.create(
-                            model=candidate,
-                            config=gen_config,
-                            history=hist,
-                        )
-                    # Periodic history pruning on active chat to protect token quota
-                    if current_chat:
-                        current_chat._curated_history = prune_chat_history(current_chat.get_history(), keep_recent_images=1)
-                    resp = current_chat.send_message(msg_payload)
-                    return current_chat, resp, candidate
-                except Exception as ex:
-                    last_err = ex
-                    err_msg = str(ex).lower()
-                    if (
-                        "503" in err_msg
-                        or "unavailable" in err_msg
-                        or "capacity" in err_msg
-                        or "404" in err_msg
-                        or "not found" in err_msg
-                        or "429" in err_msg
-                        or "resource_exhausted" in err_msg
-                    ):
-                        self.emit("log", {
-                            "level": "warning",
-                            "message": f"Model '{candidate}' hit capacity/availability issue ({str(ex)[:60]}). Automatically switching to fallback model..."
-                        })
-                        time.sleep(1.5)
-                        continue
-                    raise ex
+            import re
+
+            for round_idx in range(2):
+                for candidate in models_to_try:
+                    try:
+                        if not current_chat or getattr(current_chat, "_model", None) != candidate:
+                            hist = current_chat.get_history() if current_chat else None
+                            if hist:
+                                hist = prune_chat_history(hist)
+                            current_chat = client.chats.create(
+                                model=candidate,
+                                config=gen_config,
+                                history=hist,
+                            )
+                        # Periodic history pruning on active chat to protect token quota
+                        if current_chat:
+                            current_chat._curated_history = prune_chat_history(current_chat.get_history(), keep_recent_images=1)
+                        resp = current_chat.send_message(msg_payload)
+                        return current_chat, resp, candidate
+                    except Exception as ex:
+                        last_err = ex
+                        err_msg = str(ex).lower()
+
+                        delay_to_wait = 2.0
+                        m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
+                        if m_delay:
+                            try:
+                                delay_to_wait = min(max(float(m_delay.group(1)), 1.5), 8.0)
+                            except Exception:
+                                pass
+
+                        if (
+                            "503" in err_msg
+                            or "unavailable" in err_msg
+                            or "capacity" in err_msg
+                            or "404" in err_msg
+                            or "not found" in err_msg
+                            or "429" in err_msg
+                            or "resource_exhausted" in err_msg
+                        ):
+                            self.emit("log", {
+                                "level": "warning",
+                                "message": f"Model '{candidate}' hit capacity/quota limit ({str(ex)[:60]}...). Waiting {delay_to_wait:.1f}s and switching model..."
+                            })
+                            time.sleep(delay_to_wait)
+                            continue
+                        raise ex
             raise last_err
 
         while self.current_step < self.max_steps and not self.stop_requested:

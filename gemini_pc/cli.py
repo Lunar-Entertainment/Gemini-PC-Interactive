@@ -34,9 +34,10 @@ def main():
         print("Error: Please provide a goal using --goal 'your task here' or run the web UI via python app.py")
         sys.exit(1)
 
-    if not settings.GEMINI_API_KEY:
-        print("Error: GEMINI_API_KEY environment variable is not set.")
-        print("Set it in your terminal or .env file before running.")
+    from gemini_pc.google_oauth import oauth_manager
+    if not oauth_manager.is_authenticated() and not settings.INTERNAL_TRANSPORT_KEY:
+        print("Error: Google One account is not connected.")
+        print("Run 'python app.py' and click 'Sign in with Google' in Settings to authenticate.")
         sys.exit(1)
 
     print(f"\n[Gemini PC Interactive] Initiating task: '{args.goal}'")
