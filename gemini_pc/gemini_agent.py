@@ -140,37 +140,143 @@ class GeminiAgent:
 
     def _run_loop(self, goal: str, model_name: str, require_approval: bool):
         from gemini_pc.google_oauth import oauth_manager
+        from google.oauth2.credentials import Credentials
 
         oauth_profile = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
         api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'") if settings.GEMINI_API_KEY else ""
 
-        if not api_key:
+        client = None
+        auth_type = "none"
+
+        # 1. Try initializing with API Key if available
+        if api_key:
+            try:
+                client = genai.Client(api_key=api_key)
+                auth_type = "api_key"
+            except Exception as e:
+                logger.warning(f"Failed to initialize Gemini Client with API key: {e}")
+
+        # 2. If no API key or client failed, authenticate directly with Google One OAuth credentials
+        if not client and oauth_manager.is_authenticated():
+            token = oauth_manager.get_valid_access_token()
+            if token:
+                try:
+                    cid, csecret = oauth_manager.get_client_credentials()
+                    tokens_data = oauth_manager._tokens or {}
+                    creds = Credentials(
+                        token=token,
+                        refresh_token=tokens_data.get("refresh_token"),
+                        token_uri="https://oauth2.googleapis.com/token",
+                        client_id=cid or tokens_data.get("client_id"),
+                        client_secret=csecret or tokens_data.get("client_secret"),
+                        scopes=tokens_data.get("scopes"),
+                    )
+                    client = genai.Client(credentials=creds)
+                    auth_type = "google_one_oauth"
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Gemini Client with Google One OAuth: {e}")
+
+        if not client:
             user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
             email_info = f" ({user_email})" if user_email else ""
             self.status = AgentStatus.ERROR
             self.emit("error", {
                 "message": (
-                    f"Your Google One account{email_info} is connected! To interact with your PC, Google requires an AI Studio API key. "
-                    "Click the button in Settings to generate your free key under this account with 1 click."
+                    f"No active Gemini authentication found{email_info}. "
+                    "Please sign in with your Google One account or provide an API key in Settings."
                 ),
                 "open_settings": True
             })
             self.emit("status_change", {"status": self.status.value})
             return
 
-        try:
-            client = genai.Client(api_key=api_key)
-        except Exception as e:
-            self.status = AgentStatus.ERROR
-            self.emit("error", {"message": f"Failed to initialize Gemini Client: {str(e)}"})
-            self.emit("status_change", {"status": self.status.value})
-            return
-
-        chat_history = []
         last_action_coord = None
+        last_fn_name: Optional[str] = None
+        last_tool_output: Optional[str] = None
         sw, sh = controller.get_screen_size()
 
-        self.emit("log", {"level": "info", "message": f"Starting autonomous task with model '{model_name}'. Display resolution: {sw}x{sh}"})
+        active_model = model_name or settings.DEFAULT_MODEL
+        RELIABLE_FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash"]
+
+        self.emit("log", {
+            "level": "info",
+            "message": f"Starting autonomous task with model '{active_model}' (Auth: {auth_type}). Display resolution: {sw}x{sh}"
+        })
+
+        gen_config = types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            tools=ALL_DESKTOP_FUNCTIONS,
+            temperature=0.2,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+
+        chat = None
+        try:
+            chat = client.chats.create(
+                model=active_model,
+                config=gen_config,
+            )
+        except Exception as e:
+            logger.warning(f"Initial chat creation with '{active_model}' failed: {e}. Will try fallback.")
+
+        def prune_chat_history(history: List[types.Content], keep_recent_images: int = 1) -> List[types.Content]:
+            images_seen = 0
+            pruned = []
+            for content in reversed(history or []):
+                new_parts = []
+                for part in reversed(content.parts or []):
+                    if getattr(part, "inline_data", None):
+                        images_seen += 1
+                        if images_seen > keep_recent_images:
+                            new_parts.append(types.Part.from_text(text="[Prior screenshot state]"))
+                        else:
+                            new_parts.append(part)
+                    else:
+                        new_parts.append(part)
+                new_parts.reverse()
+                pruned.append(types.Content(role=content.role, parts=new_parts))
+            pruned.reverse()
+            return pruned
+
+        def send_with_fallback(current_chat, current_model, msg_payload):
+            models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
+            last_err = None
+            for candidate in models_to_try:
+                try:
+                    if not current_chat or getattr(current_chat, "_model", None) != candidate:
+                        hist = current_chat.get_history() if current_chat else None
+                        if hist:
+                            hist = prune_chat_history(hist)
+                        current_chat = client.chats.create(
+                            model=candidate,
+                            config=gen_config,
+                            history=hist,
+                        )
+                    # Periodic history pruning on active chat to protect token quota
+                    if current_chat:
+                        current_chat._curated_history = prune_chat_history(current_chat.get_history(), keep_recent_images=1)
+                    resp = current_chat.send_message(msg_payload)
+                    return current_chat, resp, candidate
+                except Exception as ex:
+                    last_err = ex
+                    err_msg = str(ex).lower()
+                    if (
+                        "503" in err_msg
+                        or "unavailable" in err_msg
+                        or "capacity" in err_msg
+                        or "404" in err_msg
+                        or "not found" in err_msg
+                        or "429" in err_msg
+                        or "resource_exhausted" in err_msg
+                    ):
+                        self.emit("log", {
+                            "level": "warning",
+                            "message": f"Model '{candidate}' hit capacity/availability issue ({str(ex)[:60]}). Automatically switching to fallback model..."
+                        })
+                        time.sleep(1.5)
+                        continue
+                    raise ex
+            raise last_err
 
         while self.current_step < self.max_steps and not self.stop_requested:
             # Handle pause state
@@ -216,7 +322,6 @@ class GeminiAgent:
             })
 
             # 3. Construct prompt content
-            # Convert JPEG bytes to Part for Gemini
             image_part = types.Part.from_bytes(
                 data=jpeg_bytes,
                 mime_type="image/jpeg"
@@ -230,57 +335,41 @@ class GeminiAgent:
                 f"Explain your reasoning and call the appropriate tool."
             )
 
-            # Build request contents
-            # We pass previous interaction context + current screenshot + prompt
-            current_turn = [image_part, step_prompt]
-            full_contents = chat_history + current_turn
+            turn_payload = []
+            if last_fn_name is not None:
+                fn_resp_part = types.Part.from_function_response(
+                    name=last_fn_name,
+                    response={"output": last_tool_output or "Executed"}
+                )
+                turn_payload.append(fn_resp_part)
 
-            gen_config = types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                tools=ALL_DESKTOP_FUNCTIONS,
-                temperature=0.2,
-            )
+            turn_payload.append(image_part)
+            turn_payload.append(step_prompt)
 
-            self.emit("log", {"level": "info", "message": f"Consulting Gemini {model_name} (Step {self.current_step})..."})
+            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} via Chat.send_message (Step {self.current_step})..."})
 
             try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=full_contents,
-                    config=gen_config,
-                )
+                chat, response, used_model = send_with_fallback(chat, active_model, turn_payload)
+                if used_model != active_model:
+                    active_model = used_model
             except Exception as e:
-                err_msg = str(e)
-                # Handle model name fallback if specific experimental preview name differs
-                if "404" in err_msg or "not found" in err_msg.lower():
-                    fallback_model = "gemini-2.5-flash"
-                    self.emit("log", {"level": "warning", "message": f"Model '{model_name}' not available on current endpoint, trying fallback '{fallback_model}'..."})
-                    try:
-                        response = client.models.generate_content(
-                            model=fallback_model,
-                            contents=full_contents,
-                            config=gen_config,
-                        )
-                        model_name = fallback_model
-                    except Exception as e2:
-                        self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {str(e2)}"})
-                        self.status = AgentStatus.ERROR
-                        break
-                else:
-                    self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {err_msg}"})
-                    self.status = AgentStatus.ERROR
-                    break
+                self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {str(e)}"})
+                self.status = AgentStatus.ERROR
+                break
 
             # Extract reasoning text and function calls
             thought_text = ""
             function_calls = []
 
-            for candidate in response.candidates:
+            if getattr(response, "function_calls", None):
+                function_calls = list(response.function_calls)
+
+            for candidate in getattr(response, "candidates", []) or []:
                 if candidate.content and candidate.content.parts:
                     for part in candidate.content.parts:
                         if part.text:
                             thought_text += part.text + "\n"
-                        if part.function_call:
+                        if part.function_call and not function_calls:
                             function_calls.append(part.function_call)
 
             thought_text = thought_text.strip()
@@ -297,8 +386,9 @@ class GeminiAgent:
                     self.emit("task_completed", {"summary": thought_text, "success": True})
                     break
                 else:
-                    # Give it another chance or small wait
                     time.sleep(1.0)
+                    last_fn_name = None
+                    last_tool_output = None
                     continue
 
             # Process first function call
@@ -337,6 +427,8 @@ class GeminiAgent:
                     self.status = AgentStatus.RUNNING
                     self.emit("status_change", {"status": self.status.value})
                     time.sleep(0.5)
+                    last_fn_name = fn_name
+                    last_tool_output = "Action skipped by user request."
                     continue
 
                 self.status = AgentStatus.RUNNING
@@ -366,13 +458,8 @@ class GeminiAgent:
                 "duration": round(time.time() - step_start_time, 2),
             })
 
-            # Append to history summary for context persistence
-            chat_history.append(
-                f"[Step {self.current_step}] Action: {fn_name}({fn_args}) -> Result: {tool_output}"
-            )
-            # Keep history manageable
-            if len(chat_history) > 6:
-                chat_history = chat_history[-6:]
+            last_fn_name = fn_name
+            last_tool_output = tool_output
 
             # Action delay
             time.sleep(settings.ACTION_DELAY_SEC)

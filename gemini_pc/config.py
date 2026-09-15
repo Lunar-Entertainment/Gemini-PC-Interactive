@@ -13,7 +13,7 @@ class Settings:
     PORT: int = int(os.getenv("PORT", "8080"))
     HOST: str = os.getenv("HOST", "127.0.0.1")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")
-    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini-3.8-flash")
+    DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini-3.6-flash")
     MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "30"))
     SCREENSHOT_MAX_WIDTH: int = int(os.getenv("SCREENSHOT_MAX_WIDTH", "1600"))
     GRID_OVERLAY: bool = os.getenv("GRID_OVERLAY", "true").lower() in ("true", "1", "yes")
