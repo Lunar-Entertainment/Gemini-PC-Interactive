@@ -296,6 +296,17 @@
             </div>
           </div>
 
+          <div class="form-group" style="margin-top: 14px;">
+            <label for="inputCustomApiKey">Google AI Studio API Key <span style="font-size:11px;color:#94a3b8;font-weight:400;">(Optional: overrides free-tier 20 req/day cap)</span></label>
+            <div style="display:flex;gap:8px;">
+              <input type="password" id="inputCustomApiKey" placeholder="AIzaSy... or paste key from aistudio.google.com/apikey" style="flex:1;">
+              <button type="button" id="btnSaveCustomApiKey" class="btn-chip" style="white-space:nowrap;padding:8px 14px;background:#3b82f6;color:white;border:none;">Save Key</button>
+            </div>
+            <span style="font-size:11px;color:#64748b;margin-top:4px;display:block;">
+              Consumer Google One AI Pro accounts do not include developer API quotas. Get a free API key at <a href="https://aistudio.google.com/apikey" target="_blank" style="color:#38bdf8;text-decoration:underline;">aistudio.google.com/apikey</a> for higher rate limits.
+            </span>
+          </div>
+
           <div class="form-group">
             <label for="inputMaxSteps">Maximum Steps Per Task</label>
             <input type="number" id="inputMaxSteps" min="5" max="100" value="30">

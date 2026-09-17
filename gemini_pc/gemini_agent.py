@@ -191,7 +191,7 @@ class GeminiAgent:
             "gemini-3.8-flash",
             "gemini-3.6-flash",
             "gemini-flash-latest",
-            "gemini-pro-latest"
+            "gemini-flash-lite-latest"
         ]
 
         self.emit("log", {
@@ -277,11 +277,14 @@ class GeminiAgent:
                             or "429" in err_msg
                             or "resource_exhausted" in err_msg
                         ):
+                            is_zero_quota = "limit: 0" in err_msg
+                            sleep_duration = 0 if is_zero_quota else delay_to_wait
                             self.emit("log", {
                                 "level": "warning",
-                                "message": f"Model '{candidate}' hit capacity/quota limit ({str(ex)[:60]}...). Waiting {delay_to_wait:.1f}s and switching model..."
+                                "message": f"Model '{candidate}' hit capacity/quota limit ({str(ex)[:60]}...). Switching to fallback model..."
                             })
-                            time.sleep(delay_to_wait)
+                            if sleep_duration > 0:
+                                time.sleep(sleep_duration)
                             continue
                         raise ex
             raise last_err
@@ -364,7 +367,17 @@ class GeminiAgent:
                 if used_model != active_model:
                     active_model = used_model
             except Exception as e:
-                self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {str(e)}"})
+                err_str = str(e)
+                if "429" in err_str or "resource_exhausted" in err_str.lower():
+                    friendly_msg = (
+                        f"Quota Exceeded (429 RESOURCE_EXHAUSTED): Google AI Studio Free Tier limits were reached. "
+                        f"Note: Google One AI Pro consumer subscriptions cover web Gemini (gemini.google.com) but do not grant "
+                        f"developer API quota. To unlock higher limits (or use Gemini Pro), generate a free API key at "
+                        f"https://aistudio.google.com/apikey and add it to your .env or Settings."
+                    )
+                    self.emit("error", {"message": friendly_msg})
+                else:
+                    self.emit("error", {"message": f"Gemini API error on step {self.current_step}: {err_str}"})
                 self.status = AgentStatus.ERROR
                 break
 

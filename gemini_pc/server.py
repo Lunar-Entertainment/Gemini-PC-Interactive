@@ -200,12 +200,33 @@ async def google_logout():
     return {"success": True}
 
 @app.post("/api/api-key")
-async def set_api_key():
+async def set_api_key(req: ApiKeyRequest):
+    key = req.api_key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="API key cannot be empty.")
+
+    settings.INTERNAL_TRANSPORT_KEY = key
+    os.environ["GEMINI_API_KEY"] = key
+
+    # Persist to .env
+    from gemini_pc.config import ENV_FILE
+    env_dict = {}
+    if ENV_FILE.exists():
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env_dict[k.strip()] = v.strip()
+
+    env_dict["GEMINI_API_KEY"] = key
+    with open(ENV_FILE, "w", encoding="utf-8") as f:
+        for k, v in env_dict.items():
+            f.write(f"{k}={v}\n")
+
     return {
         "success": True,
-        "authenticated": oauth_manager.is_authenticated(),
-        "has_api_key": oauth_manager.is_authenticated(),
-        "google_account": settings.GOOGLE_ACCOUNT_EMAIL,
+        "has_api_key": True,
     }
 
 @app.get("/api/screenshot")

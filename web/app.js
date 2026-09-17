@@ -17,6 +17,8 @@
   const statGoogleAccount = document.getElementById("statGoogleAccount");
   const pillGoogleOne = document.getElementById("pillGoogleOne");
   const inputGoogleEmail = document.getElementById("inputGoogleEmail");
+  const inputCustomApiKey = document.getElementById("inputCustomApiKey");
+  const btnSaveCustomApiKey = document.getElementById("btnSaveCustomApiKey");
 
   const desktopScreen = document.getElementById("desktopScreen");
   const viewportWrapper = document.getElementById("viewportWrapper");
@@ -518,6 +520,33 @@
         } else {
           const err = await res.json();
           alert("Error saving credentials: " + (err.detail || "Unknown error"));
+        }
+      } catch (err) {
+        alert("Request error: " + err.message);
+      }
+    });
+  }
+
+  if (btnSaveCustomApiKey) {
+    btnSaveCustomApiKey.addEventListener("click", async () => {
+      const key = inputCustomApiKey.value.trim();
+      if (!key) {
+        alert("Please enter a valid Google AI Studio API key.");
+        return;
+      }
+      try {
+        const res = await fetch("/api/api-key", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ api_key: key })
+        });
+        if (res.ok) {
+          alert("Google AI Studio API Key saved successfully! High-quota requests enabled.");
+          inputCustomApiKey.value = "";
+          addFeedItem("system", "API KEY UPDATED", "Saved dedicated Google AI Studio API key.");
+        } else {
+          const err = await res.json();
+          alert("Error saving API key: " + (err.detail || "Unknown error"));
         }
       } catch (err) {
         alert("Request error: " + err.message);
