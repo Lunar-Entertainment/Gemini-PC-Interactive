@@ -26,25 +26,25 @@ class AgentStatus(str, Enum):
     ERROR = "ERROR"
 
 
-SYSTEM_INSTRUCTION = """You are Gemini PC Interactive, an autonomous AI desktop agent capable of seeing the user's computer screen and controlling the PC to accomplish user goals.
+SYSTEM_INSTRUCTION = """You are Gemini PC Interactive, an autonomous AI desktop agent capable of seeing the user's computer screen and controlling the PC with high precision and speed.
 
-You have access to tools to:
-1. Click mouse coordinates (x, y), double-click, move, drag, and scroll.
-2. Type text, press keys (enter, tab, esc, win, etc.), and use keyboard shortcuts (ctrl+c, ctrl+v, win+r, alt+tab, etc.).
-3. Open applications (e.g. 'notepad', 'calc', 'chrome', 'msedge', 'code', 'explorer'), focus windows, or list open windows.
-4. Run system commands in PowerShell for file manipulation or status queries.
-5. Read/write system clipboard.
-6. Call `finish_task(summary, success)` when your objective is achieved or cannot proceed.
+COORDINATE PRECISION & VISUAL GROUNDING:
+- The screenshot has an integrated coordinate system:
+  1. High-visibility grid lines every 100px.
+  2. Labeled badges [x, y] in yellow/amber at 200px intersections across the entire viewport.
+  3. Axis numbers along the top and left borders.
+- To click ANY button, menu, or text field accurately:
+  1. Find the nearest [x, y] badge to the element.
+  2. Estimate the pixel distance from the badge to the center of the element.
+  3. Call `mouse_click(x, y)` with the exact pixel coordinates.
+- If a red/magenta bullseye marker is visible on screen, it marks your previous click location (LAST: x, y).
+  Use this marker to check if you hit or were slightly off, and immediately calibrate your next click.
 
-OPERATIONAL GUIDELINES:
-- Examine the provided screenshot carefully to locate UI elements, text, buttons, and input fields.
-- Coordinates (x, y) represent actual screen pixels. Use the coordinate markers/grid or element visual position to estimate exact button centers.
-- Before interacting with an application, ensure it is in the foreground. If an app isn't open, use `open_application` to launch it.
-- After typing into a search bar or run prompt, press 'enter' if needed.
-- If you need to open an app via Start Menu or Run dialog, you can use `key_combination("win+r")`, wait a moment, then type the command and press enter.
-- Always provide your concise reasoning before taking an action: Explain what you see and why you are taking the tool call.
-- When the user's goal is fully achieved, call `finish_task` with a clear summary of what was done.
-- If you run into an error or unexpected screen state, re-orient yourself by looking at the new screenshot and adapt.
+SPEED & OPERATIONAL RULES:
+- Keep your natural language reasoning concise (1-2 sentences). State what you see and immediately trigger the action.
+- Before typing into an input field or search bar, ensure it has focus (click it first if necessary).
+- After typing a search term or address, set press_enter=True or call press_key("enter").
+- When the goal is completed, call `finish_task(summary, success=True)` immediately.
 """
 
 class GeminiAgent:
@@ -193,7 +193,7 @@ class GeminiAgent:
         gen_config = types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
             tools=ALL_DESKTOP_FUNCTIONS,
-            temperature=0.2,
+            temperature=0.1,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
 
@@ -301,17 +301,20 @@ class GeminiAgent:
             if settings.GRID_OVERLAY:
                 processed_img = VisualGrounding.draw_coordinate_grid(
                     raw_screenshot,
-                    grid_step=150,
+                    grid_step=100,
                     last_action_coord=last_action_coord
                 )
             else:
                 processed_img = raw_screenshot
 
-            jpeg_bytes, (orig_w, orig_h) = VisualGrounding.optimize_image(
+            opt_img = VisualGrounding.optimize_image(
                 processed_img,
                 max_width=settings.SCREENSHOT_MAX_WIDTH,
                 quality=80
             )
+            jpeg_bytes = opt_img.bytes
+            orig_w, orig_h = opt_img.orig_size
+            sent_w, sent_h = opt_img.sent_size
 
             preview_b64 = VisualGrounding.to_base64_data_url(jpeg_bytes)
             self.emit("screen_update", {
@@ -329,9 +332,9 @@ class GeminiAgent:
             step_prompt = (
                 f"CURRENT GOAL: {goal}\n"
                 f"STEP: {self.current_step} / {self.max_steps}\n"
-                f"SCREEN RESOLUTION: {orig_w}x{orig_h}\n"
-                f"Observe the desktop screenshot. Decide what to do next to make progress toward the goal.\n"
-                f"Explain your reasoning and call the appropriate tool."
+                f"DISPLAY RESOLUTION: {orig_w}x{orig_h}\n"
+                f"Observe the desktop screenshot. Badges show [x, y] coordinates every 200px.\n"
+                f"Identify the target element, determine its (x, y) coordinates from the nearest badge, and call the appropriate tool."
             )
 
             turn_payload = []
@@ -433,6 +436,38 @@ class GeminiAgent:
                 self.status = AgentStatus.RUNNING
                 self.emit("status_change", {"status": self.status.value})
 
+            # Automatic coordinate translation & scaling between sent image and screen
+            scale_x = orig_w / float(sent_w) if sent_w > 0 else 1.0
+            scale_y = orig_h / float(sent_h) if sent_h > 0 else 1.0
+
+            def adjust_coords(raw_x, raw_y):
+                try:
+                    rx = float(raw_x)
+                    ry = float(raw_y)
+                    # If model returned normalized float (0.0 - 1.0):
+                    if 0.0 <= rx <= 1.0 and 0.0 <= ry <= 1.0 and orig_w > 1 and orig_h > 1:
+                        return int(round(rx * orig_w)), int(round(ry * orig_h))
+                    # If image was downscaled, map from sent image dimensions to screen pixels:
+                    if abs(scale_x - 1.0) > 0.001 or abs(scale_y - 1.0) > 0.001:
+                        return int(round(rx * scale_x)), int(round(ry * scale_y))
+                    return int(round(rx)), int(round(ry))
+                except Exception:
+                    return raw_x, raw_y
+
+            if fn_name in ("mouse_click", "mouse_double_click", "move_mouse", "mouse_right_click"):
+                if "x" in fn_args and "y" in fn_args:
+                    fn_args["x"], fn_args["y"] = adjust_coords(fn_args["x"], fn_args["y"])
+                    last_action_coord = (int(fn_args["x"]), int(fn_args["y"]))
+            elif fn_name == "drag_and_drop":
+                if "from_x" in fn_args and "from_y" in fn_args:
+                    fn_args["from_x"], fn_args["from_y"] = adjust_coords(fn_args["from_x"], fn_args["from_y"])
+                if "to_x" in fn_args and "to_y" in fn_args:
+                    fn_args["to_x"], fn_args["to_y"] = adjust_coords(fn_args["to_x"], fn_args["to_y"])
+                    last_action_coord = (int(fn_args["to_x"]), int(fn_args["to_y"]))
+            elif fn_name == "scroll_screen":
+                if fn_args.get("x", 0) > 0 or fn_args.get("y", 0) > 0:
+                    fn_args["x"], fn_args["y"] = adjust_coords(fn_args.get("x", 0), fn_args.get("y", 0))
+
             # Execute tool call
             tool_fn = TOOL_DISPATCHER.get(fn_name)
             tool_output = ""
@@ -440,10 +475,6 @@ class GeminiAgent:
                 tool_output = f"Error: Tool '{fn_name}' not found."
             else:
                 try:
-                    # Update coordinate tracking for visual indicator
-                    if "x" in fn_args and "y" in fn_args:
-                        last_action_coord = (int(fn_args["x"]), int(fn_args["y"]))
-
                     self.emit("action_executing", {"tool": fn_name, "args": fn_args})
                     tool_output = str(tool_fn(**fn_args))
                 except Exception as ex:

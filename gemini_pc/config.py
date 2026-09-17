@@ -14,9 +14,9 @@ class Settings:
     HOST: str = os.getenv("HOST", "127.0.0.1")
     DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gemini-3.1-flash-lite")
     MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "30"))
-    SCREENSHOT_MAX_WIDTH: int = int(os.getenv("SCREENSHOT_MAX_WIDTH", "1600"))
+    SCREENSHOT_MAX_WIDTH: int = int(os.getenv("SCREENSHOT_MAX_WIDTH", "1920"))
     GRID_OVERLAY: bool = os.getenv("GRID_OVERLAY", "true").lower() in ("true", "1", "yes")
-    ACTION_DELAY_SEC: float = float(os.getenv("ACTION_DELAY_SEC", "0.6"))
+    ACTION_DELAY_SEC: float = float(os.getenv("ACTION_DELAY_SEC", "0.15"))
     REQUIRE_CONFIRMATION: bool = os.getenv("REQUIRE_CONFIRMATION", "false").lower() in ("true", "1", "yes")
 
     # Google One / AI Pro Account settings

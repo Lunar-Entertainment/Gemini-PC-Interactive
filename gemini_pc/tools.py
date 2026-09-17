@@ -11,8 +11,8 @@ class DesktopTools:
         Clicks at the specified screen coordinate (x, y).
         
         Args:
-            x: Horizontal pixel coordinate on the screen.
-            y: Vertical pixel coordinate on the screen.
+            x: Horizontal pixel coordinate matching the visual grid badges [x, y].
+            y: Vertical pixel coordinate matching the visual grid badges [x, y].
             button: 'left' or 'right' or 'middle'. Default is 'left'.
             clicks: 1 for single click, 2 for double click.
         """
@@ -111,7 +111,7 @@ class DesktopTools:
         """
         res = controller.open_application(app_or_path)
         # Give the app a moment to launch
-        time.sleep(1.0)
+        time.sleep(0.3)
         return res
 
     @staticmethod
@@ -124,7 +124,7 @@ class DesktopTools:
         """
         success = controller.focus_window(window_title)
         if success:
-            time.sleep(0.3)
+            time.sleep(0.1)
             return f"Successfully focused window matching '{window_title}'"
         return f"Could not find any open window matching '{window_title}'"
 

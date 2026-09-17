@@ -212,28 +212,29 @@ async def set_api_key():
 async def get_screenshot(grid: bool = False):
     img = controller.take_screenshot()
     if grid or settings.GRID_OVERLAY:
-        img = VisualGrounding.draw_coordinate_grid(img, grid_step=150)
-    jpeg_bytes, _ = VisualGrounding.optimize_image(img, max_width=1600, quality=85)
-    return Response(content=jpeg_bytes, media_type="image/jpeg")
+        img = VisualGrounding.draw_coordinate_grid(img, grid_step=100)
+    opt = VisualGrounding.optimize_image(img, max_width=1920, quality=85)
+    return Response(content=opt.bytes, media_type="image/jpeg")
 
-async def mjpeg_generator(fps: int = 4):
-    interval = 1.0 / max(1, min(fps, 15))
+async def mjpeg_generator(fps: int = 1):
+    # Lock stream strictly to 1 FPS to minimize CPU overhead and maximize agent responsiveness
+    interval = 1.0
     while True:
         try:
             img = controller.take_screenshot()
-            jpeg_bytes, _ = VisualGrounding.optimize_image(img, max_width=1280, quality=65)
+            opt = VisualGrounding.optimize_image(img, max_width=1280, quality=60)
             yield (
                 b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + jpeg_bytes + b"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + opt.bytes + b"\r\n"
             )
             await asyncio.sleep(interval)
         except Exception:
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1.0)
 
 @app.get("/api/stream")
-async def stream_desktop(fps: int = 4):
+async def stream_desktop(fps: int = 1):
     return StreamingResponse(
-        mjpeg_generator(fps=fps),
+        mjpeg_generator(fps=1),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
@@ -356,12 +357,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 elif action == "request_screenshot":
                     img = controller.take_screenshot()
                     if settings.GRID_OVERLAY:
-                        img = VisualGrounding.draw_coordinate_grid(img, grid_step=150)
-                    jpeg_bytes, (w, h) = VisualGrounding.optimize_image(img, max_width=1600, quality=80)
-                    b64 = VisualGrounding.to_base64_data_url(jpeg_bytes)
+                        img = VisualGrounding.draw_coordinate_grid(img, grid_step=100)
+                    opt = VisualGrounding.optimize_image(img, max_width=settings.SCREENSHOT_MAX_WIDTH, quality=80)
+                    b64 = VisualGrounding.to_base64_data_url(opt.bytes)
+                    orig_w, orig_h = opt.orig_size
                     await websocket.send_text(json.dumps({
                         "type": "screen_update",
-                        "data": {"data_url": b64, "resolution": f"{w}x{h}"}
+                        "data": {"data_url": b64, "resolution": f"{orig_w}x{orig_h}"}
                     }))
                 elif action == "request_system_info":
                     sys_info = controller.get_system_info()

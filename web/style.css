@@ -346,16 +346,20 @@ body {
   box-shadow: 0 0 8px var(--accent-emerald);
 }
 
-.fps-select {
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid var(--border-color);
+.fps-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
   color: #38bdf8;
   font-family: var(--font-mono);
   font-size: 0.72rem;
-  padding: 4px 6px;
+  font-weight: 600;
+  padding: 3px 8px;
   border-radius: var(--radius-sm);
-  outline: none;
-  cursor: pointer;
+  letter-spacing: 0.03em;
+  user-select: none;
 }
 
 .btn-chip {

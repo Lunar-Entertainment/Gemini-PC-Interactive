@@ -72,19 +72,19 @@ class PCController:
             # Fallback to PyAutoGUI screenshot
             return pyautogui.screenshot()
 
-    def mouse_move(self, x: int, y: int, duration: float = 0.2):
+    def mouse_move(self, x: int, y: int, duration: float = 0.15):
         DesktopAttacher.ensure_desktop_access()
         sw, sh = self.get_screen_size()
-        x = max(0, min(x, sw - 1))
-        y = max(0, min(y, sh - 1))
+        x = max(0, min(int(round(x)), sw - 1))
+        y = max(0, min(int(round(y)), sh - 1))
         pyautogui.moveTo(x, y, duration=duration)
 
     def mouse_click(self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left", clicks: int = 1):
         DesktopAttacher.ensure_desktop_access()
         if x is not None and y is not None:
             sw, sh = self.get_screen_size()
-            x = max(0, min(x, sw - 1))
-            y = max(0, min(y, sh - 1))
+            x = max(0, min(int(round(x)), sw - 1))
+            y = max(0, min(int(round(y)), sh - 1))
             pyautogui.click(x=x, y=y, button=button, clicks=clicks)
         else:
             pyautogui.click(button=button, clicks=clicks)
@@ -95,9 +95,14 @@ class PCController:
     def mouse_right_click(self, x: Optional[int] = None, y: Optional[int] = None):
         self.mouse_click(x=x, y=y, button="right", clicks=1)
 
-    def drag(self, from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.4):
+    def drag(self, from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.3):
         DesktopAttacher.ensure_desktop_access()
-        self.mouse_move(from_x, from_y, duration=0.1)
+        sw, sh = self.get_screen_size()
+        from_x = max(0, min(int(round(from_x)), sw - 1))
+        from_y = max(0, min(int(round(from_y)), sh - 1))
+        to_x = max(0, min(int(round(to_x)), sw - 1))
+        to_y = max(0, min(int(round(to_y)), sh - 1))
+        self.mouse_move(from_x, from_y, duration=0.05)
         pyautogui.dragTo(to_x, to_y, duration=duration, button="left")
 
     def scroll(self, amount: int, x: Optional[int] = None, y: Optional[int] = None):
@@ -293,6 +298,16 @@ class PCController:
         user32.ShowWindowAsync(target_hwnd, 9)
         time.sleep(0.05)
         user32.SetForegroundWindow(target_hwnd)
+
+        # If window was outside primary monitor, reposition to primary monitor
+        sw, sh = self.get_screen_size()
+        rect = wintypes.RECT()
+        user32.GetWindowRect(target_hwnd, ctypes.byref(rect))
+        bw = rect.right - rect.left
+        bh = rect.bottom - rect.top
+        if rect.left >= sw or rect.right <= 0 or rect.top >= sh:
+            user32.MoveWindow(target_hwnd, 60, 60, min(bw, sw - 120), min(bh, sh - 120), True)
+
         return True
 
     def read_clipboard(self) -> str:

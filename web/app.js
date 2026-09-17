@@ -44,7 +44,6 @@
   const btnToggleGrid = document.getElementById("btnToggleGrid");
   const btnRefreshScreenshot = document.getElementById("btnRefreshScreenshot");
   const btnToggleStream = document.getElementById("btnToggleStream");
-  const selectFps = document.getElementById("selectFps");
   let isStreaming = true;
 
   const settingsModal = document.getElementById("settingsModal");
@@ -54,15 +53,14 @@
   const btnSaveSettings = document.getElementById("btnSaveSettings");
   const inputMaxSteps = document.getElementById("inputMaxSteps");
 
-  // Live Stream Control
+  // Live Stream Control - Locked to 1 FPS for low latency and minimal overhead
   function startStream() {
     isStreaming = true;
     if (btnToggleStream) {
       btnToggleStream.classList.add("active");
       btnToggleStream.innerHTML = '<span class="stream-dot"></span> Live Stream';
     }
-    const fps = selectFps ? selectFps.value : 4;
-    desktopScreen.src = `/api/stream?fps=${fps}&t=${Date.now()}`;
+    desktopScreen.src = `/api/stream?fps=1&t=${Date.now()}`;
   }
 
   function pauseStream() {
@@ -544,13 +542,7 @@
     });
   }
 
-  if (selectFps) {
-    selectFps.addEventListener("change", () => {
-      if (isStreaming) {
-        startStream();
-      }
-    });
-  }
+
 
   if (pillGoogleOne) {
     pillGoogleOne.addEventListener("click", showSettingsModal);
