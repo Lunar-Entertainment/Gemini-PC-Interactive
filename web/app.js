@@ -111,6 +111,10 @@
         isAuthenticated = Boolean(data.authenticated || data.has_api_key || (data.google_oauth && data.google_oauth.authenticated));
         updateStatus(data.status);
         if (data.system_info) updateSystemStats(data.system_info);
+        if (data.default_model && selectModel) {
+          const matchingOpt = Array.from(selectModel.options).find(opt => opt.value === data.default_model);
+          if (matchingOpt) selectModel.value = data.default_model;
+        }
 
         if (data.google_oauth && data.google_oauth.authenticated) {
           isAuthenticated = true;

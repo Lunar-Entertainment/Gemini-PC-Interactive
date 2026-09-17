@@ -11,8 +11,8 @@ class DesktopTools:
         Clicks at the specified screen coordinate (x, y).
         
         Args:
-            x: Horizontal pixel coordinate matching the visual grid badges [x, y].
-            y: Vertical pixel coordinate matching the visual grid badges [x, y].
+            x: Horizontal coordinate on a 0 to 1000 normalized scale (0 = leftmost edge, 1000 = rightmost edge, 500 = center).
+            y: Vertical coordinate on a 0 to 1000 normalized scale (0 = topmost edge, 1000 = bottommost edge, 500 = center).
             button: 'left' or 'right' or 'middle'. Default is 'left'.
             clicks: 1 for single click, 2 for double click.
         """
@@ -25,8 +25,8 @@ class DesktopTools:
         Double clicks at the specified screen coordinate (x, y).
         
         Args:
-            x: Horizontal pixel coordinate on the screen.
-            y: Vertical pixel coordinate on the screen.
+            x: Horizontal coordinate on a 0 to 1000 normalized scale (0 = leftmost edge, 1000 = rightmost edge, 500 = center).
+            y: Vertical coordinate on a 0 to 1000 normalized scale (0 = topmost edge, 1000 = bottommost edge, 500 = center).
         """
         controller.mouse_double_click(x=x, y=y)
         return f"Double clicked at ({x}, {y})"
@@ -37,8 +37,8 @@ class DesktopTools:
         Moves the mouse cursor to (x, y) without clicking.
         
         Args:
-            x: Horizontal pixel coordinate.
-            y: Vertical pixel coordinate.
+            x: Horizontal coordinate on a 0 to 1000 normalized scale (0 = leftmost edge, 1000 = rightmost edge, 500 = center).
+            y: Vertical coordinate on a 0 to 1000 normalized scale (0 = topmost edge, 1000 = bottommost edge, 500 = center).
         """
         controller.mouse_move(x=x, y=y)
         return f"Moved cursor to ({x}, {y})"
@@ -47,6 +47,12 @@ class DesktopTools:
     def drag_and_drop(from_x: int, from_y: int, to_x: int, to_y: int) -> str:
         """
         Drags an item from (from_x, from_y) and drops it at (to_x, to_y).
+        
+        Args:
+            from_x: Starting horizontal coordinate (0-1000 normalized scale).
+            from_y: Starting vertical coordinate (0-1000 normalized scale).
+            to_x: Ending horizontal coordinate (0-1000 normalized scale).
+            to_y: Ending vertical coordinate (0-1000 normalized scale).
         """
         controller.drag(from_x=from_x, from_y=from_y, to_x=to_x, to_y=to_y)
         return f"Dragged from ({from_x}, {from_y}) to ({to_x}, {to_y})"
@@ -93,8 +99,8 @@ class DesktopTools:
         
         Args:
             amount: Positive integer to scroll up (e.g. 300), negative integer to scroll down (e.g. -300).
-            x: Optional x coordinate to place cursor before scrolling.
-            y: Optional y coordinate to place cursor before scrolling.
+            x: Optional horizontal coordinate on a 0-1000 normalized scale to place cursor before scrolling.
+            y: Optional vertical coordinate on a 0-1000 normalized scale to place cursor before scrolling.
         """
         pos_x = x if (x > 0 or y > 0) else None
         pos_y = y if (x > 0 or y > 0) else None

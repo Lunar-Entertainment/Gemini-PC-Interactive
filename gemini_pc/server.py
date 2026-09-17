@@ -23,7 +23,7 @@ main_loop: asyncio.AbstractEventLoop = None
 
 class GoalRequest(BaseModel):
     goal: str
-    model: str = "gemini-3.1-flash-lite"
+    model: str = "gemini-3.8-flash"
     require_approval: bool = False
 
 class ApiKeyRequest(BaseModel):

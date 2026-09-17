@@ -28,23 +28,33 @@ class AgentStatus(str, Enum):
 
 SYSTEM_INSTRUCTION = """You are Gemini PC Interactive, an autonomous AI desktop agent capable of seeing the user's computer screen and controlling the PC with high precision and speed.
 
-COORDINATE PRECISION & VISUAL GROUNDING:
-- The screenshot has an integrated coordinate system:
-  1. High-visibility grid lines every 100px.
-  2. Labeled badges [x, y] in yellow/amber at 200px intersections across the entire viewport.
-  3. Axis numbers along the top and left borders.
-- To click ANY button, menu, or text field accurately:
-  1. Find the nearest [x, y] badge to the element.
-  2. Estimate the pixel distance from the badge to the center of the element.
-  3. Call `mouse_click(x, y)` with the exact pixel coordinates.
-- If a red/magenta bullseye marker is visible on screen, it marks your previous click location (LAST: x, y).
-  Use this marker to check if you hit or were slightly off, and immediately calibrate your next click.
+COORDINATE SYSTEM (0 - 1000 NORMALIZED SCALE):
+- All screen coordinates (x, y) MUST use a 0 to 1000 normalized scale:
+  - x: 0 = leftmost edge, 1000 = rightmost edge. Center x is 500.
+  - y: 0 = topmost edge, 1000 = bottommost edge. Center y is 500.
+  - (0, 0) is top-left, (1000, 1000) is bottom-right.
+- The screenshot displays reference ruler tick badges labeled from 0 to 1000 along the top and left borders, with subtle guide lines every 100 units.
+- ALL coordinates you pass to tools (mouse_click, mouse_double_click, move_mouse, mouse_right_click, drag_and_drop, scroll_screen) MUST use this 0-1000 scale.
+- The system automatically translates your 0-1000 coordinates to physical screen pixels with sub-pixel precision.
 
-SPEED & OPERATIONAL RULES:
-- Keep your natural language reasoning concise (1-2 sentences). State what you see and immediately trigger the action.
-- Before typing into an input field or search bar, ensure it has focus (click it first if necessary).
-- After typing a search term or address, set press_enter=True or call press_key("enter").
-- When the goal is completed, call `finish_task(summary, success=True)` immediately.
+ACCURACY & TARGETING RULES:
+1. Dead-Center Targeting:
+   - Carefully locate the visual boundaries of your target element (button, icon, input field, tab, menu).
+   - Estimate the exact center point (x, y) on the 0-1000 scale using the nearest 100-unit rulers and grid lines.
+2. Form Input & Focus:
+   - Before typing into any text input or search bar, you MUST click inside it first to ensure it has focus.
+   - Set press_enter=True when submitting a search query or command.
+3. Closed-Loop Visual Feedback:
+   - If a red bullseye marker is visible labeled "LAST CLICK: [x=..., y=...]", it shows your previous click's exact location.
+   - Use this feedback to see if the element was clicked or if your click was slightly off, and immediately calibrate your next action.
+4. Step-by-Step Reasoning:
+   In your reasoning, state:
+   - Target: [Element name]
+   - Estimated position: [x, y] (0-1000 scale)
+   - Action: [Tool to execute]
+   Then immediately call the tool.
+5. Completion:
+   - When the objective is achieved, call `finish_task(summary, success=True)` immediately.
 """
 
 class GeminiAgent:
@@ -178,11 +188,10 @@ class GeminiAgent:
 
         active_model = model_name or settings.DEFAULT_MODEL
         RELIABLE_FALLBACK_MODELS = [
-            "gemini-3.1-flash-lite",
-            "gemini-3.1-flash-lite-preview",
+            "gemini-3.8-flash",
             "gemini-3.6-flash",
             "gemini-flash-latest",
-            "gemini-3.5-flash"
+            "gemini-pro-latest"
         ]
 
         self.emit("log", {
@@ -333,8 +342,8 @@ class GeminiAgent:
                 f"CURRENT GOAL: {goal}\n"
                 f"STEP: {self.current_step} / {self.max_steps}\n"
                 f"DISPLAY RESOLUTION: {orig_w}x{orig_h}\n"
-                f"Observe the desktop screenshot. Badges show [x, y] coordinates every 200px.\n"
-                f"Identify the target element, determine its (x, y) coordinates from the nearest badge, and call the appropriate tool."
+                f"Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale (rulers along top and left borders).\n"
+                f"Identify the target element, state its center coordinates [x, y] (0-1000 scale) in your reasoning, and execute the tool."
             )
 
             turn_payload = []
@@ -436,7 +445,7 @@ class GeminiAgent:
                 self.status = AgentStatus.RUNNING
                 self.emit("status_change", {"status": self.status.value})
 
-            # Automatic coordinate translation & scaling between sent image and screen
+            # Automatic coordinate translation & scaling between sent image, 0-1000 scale, and physical screen
             scale_x = orig_w / float(sent_w) if sent_w > 0 else 1.0
             scale_y = orig_h / float(sent_h) if sent_h > 0 else 1.0
 
@@ -444,13 +453,27 @@ class GeminiAgent:
                 try:
                     rx = float(raw_x)
                     ry = float(raw_y)
-                    # If model returned normalized float (0.0 - 1.0):
+                    # 1. Normalized float [0.0, 1.0]
                     if 0.0 <= rx <= 1.0 and 0.0 <= ry <= 1.0 and orig_w > 1 and orig_h > 1:
-                        return int(round(rx * orig_w)), int(round(ry * orig_h))
-                    # If image was downscaled, map from sent image dimensions to screen pixels:
+                        px = int(round(rx * orig_w))
+                        py = int(round(ry * orig_h))
+                        return max(0, min(px, orig_w - 1)), max(0, min(py, orig_h - 1))
+
+                    # 2. Standard 0-1000 normalized scale (native Gemini vision & visual grounding grid)
+                    if 0.0 <= rx <= 1000.0 and 0.0 <= ry <= 1000.0:
+                        px = int(round((rx / 1000.0) * orig_w))
+                        py = int(round((ry / 1000.0) * orig_h))
+                        return max(0, min(px, orig_w - 1)), max(0, min(py, orig_h - 1))
+
+                    # 3. Raw physical screen pixels (>1000)
                     if abs(scale_x - 1.0) > 0.001 or abs(scale_y - 1.0) > 0.001:
-                        return int(round(rx * scale_x)), int(round(ry * scale_y))
-                    return int(round(rx)), int(round(ry))
+                        px = int(round(rx * scale_x))
+                        py = int(round(ry * scale_y))
+                        return max(0, min(px, orig_w - 1)), max(0, min(py, orig_h - 1))
+
+                    px = int(round(rx))
+                    py = int(round(ry))
+                    return max(0, min(px, orig_w - 1)), max(0, min(py, orig_h - 1))
                 except Exception:
                     return raw_x, raw_y
 
