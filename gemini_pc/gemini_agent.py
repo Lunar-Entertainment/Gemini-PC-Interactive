@@ -52,8 +52,10 @@ ACCURACY & TARGETING RULES:
    - Target: [Element name]
    - Estimated position: [x, y] (0-1000 scale)
    - Action: [Tool to execute]
-   Then immediately call the tool.
-5. Completion:
+5. Window Management & Focus:
+   - To bring a running application to the front, call `focus_window(window_title)` with the app name (e.g. "Minecraft", "Subnautica", "Chrome", "Notepad") or click its icon on the Windows taskbar.
+   - Do NOT run custom PowerShell scripts or create .ps1 files to focus windows when `focus_window` or clicking is available.
+6. Completion:
    - When the objective is achieved, call `finish_task(summary, success=True)` immediately.
 """
 
@@ -215,87 +217,153 @@ class GeminiAgent:
             pruned.reverse()
             return pruned
 
-        def send_with_fallback(current_chat, current_model, msg_payload):
+        # Select sticky active client and key from pool for this task
+        if key_pool.has_keys():
+            active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
+        else:
+            active_client = client
+            active_key_idx = -1
+            active_key_masked = "OAuth"
+
+        chat = None
+
+        def prune_chat_history(history: List[types.Content], keep_recent_images: int = 1) -> List[types.Content]:
+            images_seen = 0
+            pruned = []
+            for content in reversed(history or []):
+                new_parts = []
+                for part in reversed(content.parts or []):
+                    if getattr(part, "inline_data", None):
+                        images_seen += 1
+                        if images_seen > keep_recent_images:
+                            new_parts.append(types.Part.from_text(text="[Prior screenshot state]"))
+                        else:
+                            new_parts.append(part)
+                    else:
+                        new_parts.append(part)
+                new_parts.reverse()
+                pruned.append(types.Content(role=content.role, parts=new_parts))
+            pruned.reverse()
+            return pruned
+
+        def send_turn(current_chat, current_model, fn_resp_part, base_payload):
+            nonlocal active_client, active_key_idx, active_key_masked
             models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
             last_err = None
             max_rounds = max(key_pool.total_keys, 1) * len(models_to_try) + 1
 
             for attempt in range(max_rounds):
-                # Retrieve client from key pool
-                client, key_idx, key_masked = key_pool.get_active_client()
-
                 for candidate in models_to_try:
-                    try:
-                        # If chat needs creation or rebinding to this key/model
-                        if (
-                            not current_chat
-                            or getattr(current_chat, "_key_idx", None) != key_idx
-                            or getattr(current_chat, "_model", None) != candidate
-                        ):
-                            hist = current_chat.get_history() if current_chat else None
-                            if hist:
-                                hist = prune_chat_history(hist)
-                            current_chat = client.chats.create(
-                                model=candidate,
-                                config=gen_config,
-                                history=hist,
-                            )
-                            current_chat._key_idx = key_idx
-                            current_chat._model = candidate
+                    # 1. Ensure chat session exists on current active_client
+                    is_new_chat = False
+                    if (
+                        not current_chat
+                        or getattr(current_chat, "_key_idx", None) != active_key_idx
+                        or getattr(current_chat, "_model", None) != candidate
+                    ):
+                        is_new_chat = True
+                        current_chat = active_client.chats.create(
+                            model=candidate,
+                            config=gen_config,
+                        )
+                        current_chat._key_idx = active_key_idx
+                        current_chat._model = candidate
 
-                        # Protect token quota
-                        if current_chat:
+                    # 2. Build payload safely:
+                    # An API 400 INVALID_ARGUMENT error occurs if a function_response part is sent
+                    # when the preceding turn in the chat was NOT a model function call.
+                    expecting_fn_resp = False
+                    if not is_new_chat and current_chat:
+                        try:
+                            hist = current_chat.get_history()
+                            if hist and hist[-1].role == "model":
+                                expecting_fn_resp = any(
+                                    getattr(p, "function_call", None) is not None
+                                    for p in (hist[-1].parts or [])
+                                )
+                        except Exception:
+                            pass
+
+                    if expecting_fn_resp and fn_resp_part is not None:
+                        payload = [fn_resp_part] + base_payload
+                    else:
+                        payload = base_payload
+
+                    # 3. Prune older screenshots to protect token quota
+                    if current_chat and not is_new_chat:
+                        try:
                             current_chat._curated_history = prune_chat_history(
                                 current_chat.get_history(), keep_recent_images=1
                             )
+                        except Exception:
+                            pass
 
-                        resp = current_chat.send_message(msg_payload)
-                        key_pool.mark_key_success(key_idx)
+                    # 4. Attempt send_message
+                    try:
+                        resp = current_chat.send_message(payload)
+                        if active_key_idx >= 0:
+                            key_pool.mark_key_success(active_key_idx)
                         return current_chat, resp, candidate
 
                     except Exception as ex:
                         last_err = ex
                         err_msg = str(ex).lower()
 
-                        delay_to_wait = 45.0
-                        m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
-                        if m_delay:
-                            try:
-                                delay_to_wait = min(max(float(m_delay.group(1)), 5.0), 60.0)
-                            except Exception:
-                                pass
-
-                        if (
-                            "429" in err_msg
-                            or "resource_exhausted" in err_msg
-                            or "quota" in err_msg
-                        ):
-                            key_pool.mark_key_rate_limited(key_idx, delay_to_wait)
+                        # Case A: Function response turn mismatch (400 INVALID_ARGUMENT)
+                        if "function response" in err_msg or "function call turn" in err_msg:
                             self.emit("log", {
                                 "level": "warning",
-                                "message": (
-                                    f"Key #{key_idx + 1} ({key_masked}) rate-limited on '{candidate}'. "
-                                    f"Auto-rotating to next key in pool ({key_pool.available_keys_count}/{key_pool.total_keys} ready)..."
-                                )
+                                "message": "Function turn mismatch detected. Resetting chat and continuing with visual context..."
                             })
-                            current_chat = None  # Rebind chat on next key
-                            break  # Break inner model loop to rotate to next key
+                            current_chat = None
+                            fn_resp_part = None  # Clear orphaned response part
+                            continue
 
-                        elif (
-                            "404" in err_msg
-                            or "not found" in err_msg
-                            or "503" in err_msg
-                            or "unavailable" in err_msg
-                        ):
+                        # Case B: Rate Limit (429 RESOURCE_EXHAUSTED)
+                        if "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg:
+                            delay_to_wait = 30.0
+                            m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
+                            if m_delay:
+                                try:
+                                    delay_to_wait = min(max(float(m_delay.group(1)), 5.0), 60.0)
+                                except Exception:
+                                    pass
+
+                            if active_key_idx >= 0:
+                                key_pool.mark_key_rate_limited(active_key_idx, delay_to_wait)
+                                # Rotate to next key in pool
+                                active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
+                                self.emit("log", {
+                                    "level": "warning",
+                                    "message": (
+                                        f"Key rate-limited. Auto-rotated to Key #{active_key_idx + 1} ({active_key_masked}). "
+                                        f"{key_pool.available_keys_count}/{key_pool.total_keys} keys ready."
+                                    )
+                                })
+                            current_chat = None
+                            fn_resp_part = None
+                            break  # Break model loop to retry on new key
+
+                        # Case C: 503 High Demand / Unavailable
+                        if "503" in err_msg or "unavailable" in err_msg:
                             self.emit("log", {
                                 "level": "warning",
-                                "message": f"Model '{candidate}' returned {str(ex)[:60]}... Trying fallback model..."
+                                "message": f"Model '{candidate}' high demand (503). Retrying in 2s with fallback model..."
+                            })
+                            time.sleep(2.0)
+                            current_chat = None
+                            continue
+
+                        # Case D: 404 Model Not Found
+                        if "404" in err_msg or "not found" in err_msg:
+                            self.emit("log", {
+                                "level": "warning",
+                                "message": f"Model '{candidate}' not found. Trying next fallback model..."
                             })
                             current_chat = None
                             continue
 
-                        else:
-                            raise ex
+                        raise ex
 
             raise last_err
 
@@ -355,35 +423,36 @@ class GeminiAgent:
                 f"CURRENT GOAL: {goal}\n"
                 f"STEP: {self.current_step} / {self.max_steps}\n"
                 f"DISPLAY RESOLUTION: {orig_w}x{orig_h}\n"
-                f"Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale (rulers along top and left borders).\n"
-                f"Identify the target element, state its center coordinates [x, y] (0-1000 scale) in your reasoning, and execute the tool."
+            )
+            if last_fn_name is not None:
+                step_prompt += f"PREVIOUS ACTION EXECUTED: {last_fn_name} -> Output: {last_tool_output or 'Done'}\n"
+
+            step_prompt += (
+                "Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale (rulers along top and left borders).\n"
+                "Identify the target element, state its center coordinates [x, y] (0-1000 scale) in your reasoning, and execute the tool."
             )
 
-            turn_payload = []
+            base_payload = [image_part, step_prompt]
+
+            fn_resp_part = None
             if last_fn_name is not None:
                 fn_resp_part = types.Part.from_function_response(
                     name=last_fn_name,
                     response={"output": last_tool_output or "Executed"}
                 )
-                turn_payload.append(fn_resp_part)
 
-            turn_payload.append(image_part)
-            turn_payload.append(step_prompt)
-
-            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} via Chat.send_message (Step {self.current_step})..."})
+            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step}, Key: {active_key_masked})..."})
 
             try:
-                chat, response, used_model = send_with_fallback(chat, active_model, turn_payload)
+                chat, response, used_model = send_turn(chat, active_model, fn_resp_part, base_payload)
                 if used_model != active_model:
                     active_model = used_model
             except Exception as e:
                 err_str = str(e)
                 if "429" in err_str or "resource_exhausted" in err_str.lower():
                     friendly_msg = (
-                        f"Quota Exceeded (429 RESOURCE_EXHAUSTED): Google AI Studio Free Tier limits were reached. "
-                        f"Note: Google One AI Pro consumer subscriptions cover web Gemini (gemini.google.com) but do not grant "
-                        f"developer API quota. To unlock higher limits (or use Gemini Pro), generate a free API key at "
-                        f"https://aistudio.google.com/apikey and add it to your .env or Settings."
+                        f"Quota Exceeded (429 RESOURCE_EXHAUSTED): All keys in the pool are currently on cooldown. "
+                        f"Please wait a moment for the keys to reset."
                     )
                     self.emit("error", {"message": friendly_msg})
                 else:
