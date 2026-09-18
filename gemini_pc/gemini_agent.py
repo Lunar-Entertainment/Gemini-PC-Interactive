@@ -150,34 +150,22 @@ class GeminiAgent:
 
     def _run_loop(self, goal: str, model_name: str, require_approval: bool):
         from gemini_pc.google_oauth import oauth_manager
+        from gemini_pc.key_pool import key_pool
+        import re
 
         oauth_profile = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
-        user_display = oauth_profile.get("name") or oauth_profile.get("email") or "User"
+        user_display = oauth_profile.get("name") or oauth_profile.get("email") or ""
 
-        client = None
-        auth_type = f"Google One ({user_display})"
-
-        if not oauth_manager.is_authenticated():
-            user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
-            email_info = f" ({user_email})" if user_email else ""
+        if key_pool.has_keys():
+            auth_type = f"Key Pool ({key_pool.total_keys} active keys, {key_pool.total_keys * 15} RPM max)"
+        elif oauth_manager.is_authenticated():
+            auth_type = f"Google One ({user_display or 'Active'})"
+        else:
             self.status = AgentStatus.ERROR
             self.emit("error", {
-                "message": (
-                    f"Please sign in with your Google One account{email_info} in Settings to connect Gemini PC Interactive."
-                ),
+                "message": "No API keys configured. Please add your Gemini API keys in Settings or .env to start.",
                 "open_settings": True
             })
-            self.emit("status_change", {"status": self.status.value})
-            return
-
-        # Initialize the GenAI Client transparently for Google One account
-        try:
-            transport_key = settings.INTERNAL_TRANSPORT_KEY
-            client = genai.Client(api_key=transport_key)
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini Client: {e}")
-            self.status = AgentStatus.ERROR
-            self.emit("error", {"message": f"Google One authentication failed: {e}"})
             self.emit("status_change", {"status": self.status.value})
             return
 
@@ -188,9 +176,9 @@ class GeminiAgent:
 
         active_model = model_name or settings.DEFAULT_MODEL
         RELIABLE_FALLBACK_MODELS = [
-            "gemini-3.8-flash",
             "gemini-3.6-flash",
             "gemini-flash-latest",
+            "gemini-2.0-flash",
             "gemini-flash-lite-latest"
         ]
 
@@ -207,13 +195,6 @@ class GeminiAgent:
         )
 
         chat = None
-        try:
-            chat = client.chats.create(
-                model=active_model,
-                config=gen_config,
-            )
-        except Exception as e:
-            logger.warning(f"Initial chat creation with '{active_model}' failed: {e}. Will try fallback.")
 
         def prune_chat_history(history: List[types.Content], keep_recent_images: int = 1) -> List[types.Content]:
             images_seen = 0
@@ -237,12 +218,20 @@ class GeminiAgent:
         def send_with_fallback(current_chat, current_model, msg_payload):
             models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
             last_err = None
-            import re
+            max_rounds = max(key_pool.total_keys, 1) * len(models_to_try) + 1
 
-            for round_idx in range(2):
+            for attempt in range(max_rounds):
+                # Retrieve client from key pool
+                client, key_idx, key_masked = key_pool.get_active_client()
+
                 for candidate in models_to_try:
                     try:
-                        if not current_chat or getattr(current_chat, "_model", None) != candidate:
+                        # If chat needs creation or rebinding to this key/model
+                        if (
+                            not current_chat
+                            or getattr(current_chat, "_key_idx", None) != key_idx
+                            or getattr(current_chat, "_model", None) != candidate
+                        ):
                             hist = current_chat.get_history() if current_chat else None
                             if hist:
                                 hist = prune_chat_history(hist)
@@ -251,42 +240,63 @@ class GeminiAgent:
                                 config=gen_config,
                                 history=hist,
                             )
-                        # Periodic history pruning on active chat to protect token quota
+                            current_chat._key_idx = key_idx
+                            current_chat._model = candidate
+
+                        # Protect token quota
                         if current_chat:
-                            current_chat._curated_history = prune_chat_history(current_chat.get_history(), keep_recent_images=1)
+                            current_chat._curated_history = prune_chat_history(
+                                current_chat.get_history(), keep_recent_images=1
+                            )
+
                         resp = current_chat.send_message(msg_payload)
+                        key_pool.mark_key_success(key_idx)
                         return current_chat, resp, candidate
+
                     except Exception as ex:
                         last_err = ex
                         err_msg = str(ex).lower()
 
-                        delay_to_wait = 2.0
+                        delay_to_wait = 45.0
                         m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
                         if m_delay:
                             try:
-                                delay_to_wait = min(max(float(m_delay.group(1)), 1.5), 8.0)
+                                delay_to_wait = min(max(float(m_delay.group(1)), 5.0), 60.0)
                             except Exception:
                                 pass
 
                         if (
-                            "503" in err_msg
-                            or "unavailable" in err_msg
-                            or "capacity" in err_msg
-                            or "404" in err_msg
-                            or "not found" in err_msg
-                            or "429" in err_msg
+                            "429" in err_msg
                             or "resource_exhausted" in err_msg
+                            or "quota" in err_msg
                         ):
-                            is_zero_quota = "limit: 0" in err_msg
-                            sleep_duration = 0 if is_zero_quota else delay_to_wait
+                            key_pool.mark_key_rate_limited(key_idx, delay_to_wait)
                             self.emit("log", {
                                 "level": "warning",
-                                "message": f"Model '{candidate}' hit capacity/quota limit ({str(ex)[:60]}...). Switching to fallback model..."
+                                "message": (
+                                    f"Key #{key_idx + 1} ({key_masked}) rate-limited on '{candidate}'. "
+                                    f"Auto-rotating to next key in pool ({key_pool.available_keys_count}/{key_pool.total_keys} ready)..."
+                                )
                             })
-                            if sleep_duration > 0:
-                                time.sleep(sleep_duration)
+                            current_chat = None  # Rebind chat on next key
+                            break  # Break inner model loop to rotate to next key
+
+                        elif (
+                            "404" in err_msg
+                            or "not found" in err_msg
+                            or "503" in err_msg
+                            or "unavailable" in err_msg
+                        ):
+                            self.emit("log", {
+                                "level": "warning",
+                                "message": f"Model '{candidate}' returned {str(ex)[:60]}... Trying fallback model..."
+                            })
+                            current_chat = None
                             continue
-                        raise ex
+
+                        else:
+                            raise ex
+
             raise last_err
 
         while self.current_step < self.max_steps and not self.stop_requested:

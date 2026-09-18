@@ -118,7 +118,12 @@
           if (matchingOpt) selectModel.value = data.default_model;
         }
 
-        if (data.google_oauth && data.google_oauth.authenticated) {
+        if (data.key_pool && data.key_pool.total > 0) {
+          isAuthenticated = true;
+          statGoogleAccount.textContent = `Key Pool: ${data.key_pool.total} Keys (${data.key_pool.rpm_capacity} RPM)`;
+          statGoogleAccount.style.color = "#34d399";
+          hideSettingsModal();
+        } else if (data.google_oauth && data.google_oauth.authenticated) {
           isAuthenticated = true;
           renderOauthProfile(data.google_oauth);
           hideSettingsModal();
@@ -130,7 +135,7 @@
           statGoogleAccount.textContent = "AI Pro: Active";
           hideSettingsModal();
         } else {
-          statGoogleAccount.textContent = "AI Pro: Connect";
+          statGoogleAccount.textContent = "AI Keys: Connect";
           showSettingsModal();
         }
         break;
@@ -531,7 +536,7 @@
     btnSaveCustomApiKey.addEventListener("click", async () => {
       const key = inputCustomApiKey.value.trim();
       if (!key) {
-        alert("Please enter a valid Google AI Studio API key.");
+        alert("Please enter one or more Google AI Studio API keys.");
         return;
       }
       try {
@@ -541,12 +546,19 @@
           body: JSON.stringify({ api_key: key })
         });
         if (res.ok) {
-          alert("Google AI Studio API Key saved successfully! High-quota requests enabled.");
+          const respData = await res.json();
+          const totalKeys = respData.key_pool ? respData.key_pool.total : 1;
+          const rpmCap = respData.key_pool ? respData.key_pool.rpm_capacity : 15;
+          alert(`Saved ${totalKeys} API key(s) to pool! Throughput: ${rpmCap} RPM with auto-rotation.`);
           inputCustomApiKey.value = "";
-          addFeedItem("system", "API KEY UPDATED", "Saved dedicated Google AI Studio API key.");
+          statGoogleAccount.textContent = `Key Pool: ${totalKeys} Keys (${rpmCap} RPM)`;
+          statGoogleAccount.style.color = "#34d399";
+          isAuthenticated = true;
+          addFeedItem("system", "KEY POOL UPDATED", `Saved ${totalKeys} keys with ${rpmCap} RPM auto-failover capacity.`);
+          hideSettingsModal();
         } else {
           const err = await res.json();
-          alert("Error saving API key: " + (err.detail || "Unknown error"));
+          alert("Error saving API keys: " + (err.detail || "Unknown error"));
         }
       } catch (err) {
         alert("Request error: " + err.message);
