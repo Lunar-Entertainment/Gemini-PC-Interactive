@@ -12,7 +12,7 @@ import psutil
 
 # Safe PyAutoGUI settings
 pyautogui.FAILSAFE = True  # Move mouse to top-left corner (0,0) to abort
-pyautogui.PAUSE = 0.05     # Minimal delay between actions
+pyautogui.PAUSE = 0.02     # Ultra-minimal delay between actions for maximum speed
 
 class DesktopAttacher:
     """Ensures the calling thread is attached to the interactive desktop and sets DPI awareness."""
@@ -72,7 +72,7 @@ class PCController:
             # Fallback to PyAutoGUI screenshot
             return pyautogui.screenshot()
 
-    def mouse_move(self, x: int, y: int, duration: float = 0.15):
+    def mouse_move(self, x: int, y: int, duration: float = 0.05):
         DesktopAttacher.ensure_desktop_access()
         sw, sh = self.get_screen_size()
         x = max(0, min(int(round(x)), sw - 1))
@@ -95,7 +95,7 @@ class PCController:
     def mouse_right_click(self, x: Optional[int] = None, y: Optional[int] = None):
         self.mouse_click(x=x, y=y, button="right", clicks=1)
 
-    def drag(self, from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.3):
+    def drag(self, from_x: int, from_y: int, to_x: int, to_y: int, duration: float = 0.15):
         DesktopAttacher.ensure_desktop_access()
         sw, sh = self.get_screen_size()
         from_x = max(0, min(int(round(from_x)), sw - 1))

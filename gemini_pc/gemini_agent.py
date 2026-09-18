@@ -228,14 +228,10 @@ class GeminiAgent:
             pruned.reverse()
             return pruned
 
-        # Select sticky active client and key from pool for this task
-        if key_pool.has_keys():
-            active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
-        else:
-            active_client = client
-            active_key_idx = -1
-            active_key_masked = "OAuth"
-
+        # Active client and key from pool (selected per-turn for 60 RPM round-robin)
+        active_client = client
+        active_key_idx = -1
+        active_key_masked = "OAuth"
         chat = None
 
         def prune_chat_history(history: List[types.Content], keep_recent_images: int = 1) -> List[types.Content]:
@@ -263,45 +259,66 @@ class GeminiAgent:
             last_err = None
             max_rounds = max(key_pool.total_keys, 1) * len(models_to_try) + 1
 
+            saved_history = None
+            if current_chat:
+                try:
+                    raw_h = current_chat.get_history()
+                    if raw_h:
+                        saved_history = prune_chat_history(raw_h, keep_recent_images=1)
+                except Exception:
+                    pass
+
             for attempt in range(max_rounds):
                 for candidate in models_to_try:
-                    # 1. Ensure chat session exists on current active_client
-                    is_new_chat = False
+                    # Keep saved_history up-to-date if current_chat has history
+                    if current_chat:
+                        try:
+                            raw_h = current_chat.get_history()
+                            if raw_h:
+                                saved_history = prune_chat_history(raw_h, keep_recent_images=1)
+                        except Exception:
+                            pass
+
+                    # Ensure chat session is bound to current active_client & candidate model
                     if (
                         not current_chat
                         or getattr(current_chat, "_key_idx", None) != active_key_idx
                         or getattr(current_chat, "_model", None) != candidate
                     ):
-                        is_new_chat = True
                         current_chat = active_client.chats.create(
                             model=candidate,
                             config=gen_config,
+                            history=saved_history,
                         )
                         current_chat._key_idx = active_key_idx
                         current_chat._model = candidate
 
-                    # 2. Build payload safely:
+                    # Build payload safely:
                     # An API 400 INVALID_ARGUMENT error occurs if a function_response part is sent
                     # when the preceding turn in the chat was NOT a model function call.
                     expecting_fn_resp = False
-                    if not is_new_chat and current_chat:
+                    check_hist = None
+                    if current_chat:
                         try:
-                            hist = current_chat.get_history()
-                            if hist and hist[-1].role == "model":
-                                expecting_fn_resp = any(
-                                    getattr(p, "function_call", None) is not None
-                                    for p in (hist[-1].parts or [])
-                                )
+                            check_hist = current_chat.get_history()
                         except Exception:
                             pass
+                    if not check_hist:
+                        check_hist = saved_history
+
+                    if check_hist and check_hist[-1].role == "model":
+                        expecting_fn_resp = any(
+                            getattr(p, "function_call", None) is not None
+                            for p in (check_hist[-1].parts or [])
+                        )
 
                     if expecting_fn_resp and fn_resp_part is not None:
                         payload = [fn_resp_part] + base_payload
                     else:
                         payload = base_payload
 
-                    # 3. Prune older screenshots to protect token quota
-                    if current_chat and not is_new_chat:
+                    # Prune older screenshots on active chat to protect token quota
+                    if current_chat:
                         try:
                             current_chat._curated_history = prune_chat_history(
                                 current_chat.get_history(), keep_recent_images=1
@@ -309,7 +326,7 @@ class GeminiAgent:
                         except Exception:
                             pass
 
-                    # 4. Attempt send_message
+                    # Attempt send_message
                     try:
                         resp = current_chat.send_message(payload)
                         if active_key_idx >= 0:
@@ -327,6 +344,7 @@ class GeminiAgent:
                                 "message": "Function turn mismatch detected. Resetting chat and continuing with visual context..."
                             })
                             current_chat = None
+                            saved_history = None
                             fn_resp_part = None  # Clear orphaned response part
                             continue
 
@@ -352,8 +370,7 @@ class GeminiAgent:
                                     )
                                 })
                             current_chat = None
-                            fn_resp_part = None
-                            break  # Break model loop to retry on new key
+                            break  # Break model loop to retry on new key with preserved saved_history and fn_resp_part
 
                         # Case C: 503 High Demand / Unavailable
                         if "503" in err_msg or "unavailable" in err_msg:
@@ -464,7 +481,12 @@ class GeminiAgent:
                     response={"output": last_tool_output or "Executed"}
                 )
 
-            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step}, Key: {active_key_masked})..."})
+            # Rotate to next key in pool for continuous round-robin up to 60 RPM
+            if key_pool.has_keys():
+                active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
+
+            key_label = f"Key #{active_key_idx + 1} [{active_key_masked}]" if active_key_idx >= 0 else active_key_masked
+            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step}, {key_label})..."})
 
             try:
                 chat, response, used_model = send_turn(chat, active_model, fn_resp_part, base_payload)
