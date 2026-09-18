@@ -229,29 +229,18 @@ class GeminiAgent:
             return pruned
 
         # Active client and key from pool (selected per-turn for 60 RPM round-robin)
-        active_client = client
-        active_key_idx = -1
-        active_key_masked = "OAuth"
-        chat = None
-
-        def prune_chat_history(history: List[types.Content], keep_recent_images: int = 1) -> List[types.Content]:
-            images_seen = 0
-            pruned = []
-            for content in reversed(history or []):
-                new_parts = []
-                for part in reversed(content.parts or []):
-                    if getattr(part, "inline_data", None):
-                        images_seen += 1
-                        if images_seen > keep_recent_images:
-                            new_parts.append(types.Part.from_text(text="[Prior screenshot state]"))
-                        else:
-                            new_parts.append(part)
-                    else:
-                        new_parts.append(part)
-                new_parts.reverse()
-                pruned.append(types.Content(role=content.role, parts=new_parts))
-            pruned.reverse()
-            return pruned
+        if key_pool.has_keys():
+            active_client = None
+            active_key_idx = -1
+            active_key_masked = "Pool"
+        elif oauth_manager.is_authenticated():
+            active_client = oauth_manager.get_client()
+            active_key_idx = -1
+            active_key_masked = "Google One"
+        else:
+            active_client = None
+            active_key_idx = -1
+            active_key_masked = "Unknown"
 
         def send_turn(current_chat, current_model, fn_resp_part, base_payload):
             nonlocal active_client, active_key_idx, active_key_masked
@@ -484,6 +473,8 @@ class GeminiAgent:
             # Rotate to next key in pool for continuous round-robin up to 60 RPM
             if key_pool.has_keys():
                 active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
+            elif active_client is None and oauth_manager.is_authenticated():
+                active_client = oauth_manager.get_client()
 
             key_label = f"Key #{active_key_idx + 1} [{active_key_masked}]" if active_key_idx >= 0 else active_key_masked
             self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step}, {key_label})..."})
