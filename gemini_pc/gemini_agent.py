@@ -33,29 +33,40 @@ COORDINATE SYSTEM (0 - 1000 NORMALIZED SCALE):
   - x: 0 = leftmost edge, 1000 = rightmost edge. Center x is 500.
   - y: 0 = topmost edge, 1000 = bottommost edge. Center y is 500.
   - (0, 0) is top-left, (1000, 1000) is bottom-right.
-- The screenshot displays reference ruler tick badges labeled from 0 to 1000 along the top and left borders, with subtle guide lines every 100 units.
+- The screenshot displays reference ruler tick badges labeled from 0 to 1000 along ALL 4 BORDERS (Top, Bottom, Left, and Right), with tick marks every 25 units.
+- Golden yellow lines mark the center axes at x=500 and y=500.
+- Small landmark pills show local coordinates across quadrants (e.g. [250,250], [750,250], [500,500], [250,750], [750,750], [500,940]).
 - ALL coordinates you pass to tools (mouse_click, mouse_double_click, move_mouse, mouse_right_click, drag_and_drop, scroll_screen) MUST use this 0-1000 scale.
 - The system automatically translates your 0-1000 coordinates to physical screen pixels with sub-pixel precision.
 
 ACCURACY & TARGETING RULES:
-1. Dead-Center Targeting:
+1. Dead-Center Targeting & Border Rulers:
    - Carefully locate the visual boundaries of your target element (button, icon, input field, tab, menu).
-   - Estimate the exact center point (x, y) on the 0-1000 scale using the nearest 100-unit rulers and grid lines.
+   - Use the nearest border ruler (e.g. bottom border for taskbar icons at y=960-990) and the 25-unit tick marks to find the exact center [x, y].
+   - Windows taskbar icons at the bottom are spaced ~23-25 units apart. Use the bottom ticks to avoid clicking between or adjacent to icons.
 2. Form Input & Focus:
    - Before typing into any text input or search bar, you MUST click inside it first to ensure it has focus.
    - Set press_enter=True when submitting a search query or command.
 3. Closed-Loop Visual Feedback:
    - If a red bullseye marker is visible labeled "LAST CLICK: [x=..., y=...]", it shows your previous click's exact location.
    - Use this feedback to see if the element was clicked or if your click was slightly off, and immediately calibrate your next action.
-4. Step-by-Step Reasoning:
+4. Window Management & Switching:
+   - When the user asks to switch to, open, or click an application window that is already open (e.g. "click on minecraft"), ALWAYS prefer calling `focus_window(window_title)` (e.g. `focus_window("Minecraft")`).
+   - `focus_window` automatically restores the window, brings it to the top, and clicks inside it to capture mouse/keyboard focus with 100% precision.
+5. 3D Games & Camera Rotation (Minecraft, etc.):
+   - Once a 3D game window is focused and active:
+     - To look around or turn the camera: Use `game_look(direction="left"|"right"|"up"|"down", degrees=45)` or `mouse_move_relative(dx, dy)`.
+       Do NOT use `move_mouse(x, y)` for 3D camera control, because 3D games lock the cursor and require relative hardware mouse deltas!
+     - To walk or move: Use `hold_key(key="w", duration=1.5)` (or "a", "s", "d").
+     - To walk safely and prevent falling into lava or off ledges in Minecraft: Use `hold_key(key="shift", duration=...)` to sneak.
+     - To jump or swim up: Use `hold_key(key="space", duration=0.3)`.
+6. Step-by-Step Reasoning:
    In your reasoning, state:
-   - Target: [Element name]
-   - Estimated position: [x, y] (0-1000 scale)
+   - Target: [Element name / Action]
+   - Estimated position: [x, y] (0-1000 scale) if clicking
    - Action: [Tool to execute]
-5. Window Management & Focus:
-   - To bring a running application to the front, call `focus_window(window_title)` with the app name (e.g. "Minecraft", "Subnautica", "Chrome", "Notepad") or click its icon on the Windows taskbar.
-   - Do NOT run custom PowerShell scripts or create .ps1 files to focus windows when `focus_window` or clicking is available.
-6. Completion:
+   Then execute the tool.
+7. Completion:
    - When the objective is achieved, call `finish_task(summary, success=True)` immediately.
 """
 
@@ -400,7 +411,7 @@ class GeminiAgent:
             opt_img = VisualGrounding.optimize_image(
                 processed_img,
                 max_width=settings.SCREENSHOT_MAX_WIDTH,
-                quality=80
+                quality=90
             )
             jpeg_bytes = opt_img.bytes
             orig_w, orig_h = opt_img.orig_size
@@ -413,23 +424,35 @@ class GeminiAgent:
                 "resolution": f"{orig_w}x{orig_h}"
             })
 
-            # 3. Construct prompt content
+            # 3. Construct prompt content with open windows context
             image_part = types.Part.from_bytes(
                 data=jpeg_bytes,
                 mime_type="image/jpeg"
             )
+
+            open_wins = []
+            try:
+                for w in controller.list_windows():
+                    t = w.get("title", "").strip()
+                    if t and len(t) > 2 and not t.startswith("NVIDIA") and not t.startswith("Windows indata"):
+                        open_wins.append(t)
+            except Exception:
+                pass
 
             step_prompt = (
                 f"CURRENT GOAL: {goal}\n"
                 f"STEP: {self.current_step} / {self.max_steps}\n"
                 f"DISPLAY RESOLUTION: {orig_w}x{orig_h}\n"
             )
+            if open_wins:
+                step_prompt += f"OPEN APPLICATION WINDOWS: {', '.join(open_wins[:6])}\n"
             if last_fn_name is not None:
                 step_prompt += f"PREVIOUS ACTION EXECUTED: {last_fn_name} -> Output: {last_tool_output or 'Done'}\n"
 
             step_prompt += (
-                "Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale (rulers along top and left borders).\n"
-                "Identify the target element, state its center coordinates [x, y] (0-1000 scale) in your reasoning, and execute the tool."
+                "Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale with rulers on ALL 4 borders (top, bottom, left, right) and ticks every 25 units.\n"
+                "To switch to/focus any open application, call focus_window(window_title). For taskbar icons (y: 960-990), align using the bottom border ticks.\n"
+                "FOR 3D GAMES (Minecraft, etc.): To look around, use game_look(direction, degrees) or mouse_move_relative(dx, dy). To walk, use hold_key(key, duration). Never use move_mouse for 3D camera control."
             )
 
             base_payload = [image_part, step_prompt]

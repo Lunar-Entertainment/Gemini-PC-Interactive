@@ -44,7 +44,7 @@ class VisualGrounding:
     def optimize_image(
         img: Image.Image,
         max_width: int = 1920,
-        quality: int = 85
+        quality: int = 90
     ) -> OptimizedImage:
         """
         Resizes screenshot if needed and encodes to JPEG bytes.
@@ -76,88 +76,115 @@ class VisualGrounding:
         last_action_coord: Optional[Tuple[int, int]] = None
     ) -> Image.Image:
         """
-        Draws a high-precision 0-1000 normalized coordinate system overlay.
-        Rulers along the top and left borders provide clear reference marks from 0 to 1000.
-        Subtle grid lines and non-obstructive crosshairs allow Gemini to pinpoint tiny buttons
-        with dead-center accuracy without covering screen elements.
+        Draws an ultra-high-precision 0-1000 normalized coordinate system overlay.
+        Rulers along ALL 4 BORDERS (Top, Bottom, Left, Right) with 25-unit tick marks provide
+        pinpoint references everywhere on screen, especially for taskbar icons and bottom buttons.
         """
         canvas = img.copy()
         draw = ImageDraw.Draw(canvas, "RGBA")
         w, h = canvas.size
 
-        font = cls._get_font(size=12, bold=False)
+        font = cls._get_font(size=11, bold=True)
+        font_small = cls._get_font(size=9, bold=False)
         font_bold = cls._get_font(size=12, bold=True)
 
-        # 1. Subtle non-obstructive grid lines across viewport (0 to 1000 scale)
-        for u in range(100, 1000, 100):
+        # 1. Subtle, clear grid lines (every 50 and 100 units on 0-1000 scale)
+        for u in range(50, 1000, 50):
             px = int(round(u / 1000.0 * w))
             py = int(round(u / 1000.0 * h))
 
-            # Major center line at 500
             if u == 500:
-                line_color = (56, 189, 248, 55)  # Sky blue center line
+                # Center axes in high-visibility golden amber
+                line_color = (251, 191, 36, 140)
                 width = 2
+            elif u % 100 == 0:
+                # Major 100-unit lines
+                line_color = (56, 189, 248, 65)
+                width = 1
             else:
-                line_color = (0, 210, 255, 30)   # Ultra-subtle cyan
+                # Minor 50-unit lines
+                line_color = (56, 189, 248, 30)
                 width = 1
 
             draw.line([(px, 0), (px, h)], fill=line_color, width=width)
             draw.line([(0, py), (w, py)], fill=line_color, width=width)
 
-        # 2. Minor tick markers every 50 units on top and left borders
-        for u in range(50, 1000, 100):
+        # 2. Precision tick markers every 25 units on ALL 4 BORDERS
+        for u in range(25, 1000, 25):
             px = int(round(u / 1000.0 * w))
             py = int(round(u / 1000.0 * h))
-            draw.line([(px, 0), (px, 6)], fill=(56, 189, 248, 160), width=1)
-            draw.line([(0, py), (6, py)], fill=(56, 189, 248, 160), width=1)
+            tlen = 8 if u % 50 == 0 else 4
 
-        # 3. Top Border Ruler Badges (x: 0, 100, 200 ... 1000)
+            # Top and Bottom border ticks
+            draw.line([(px, 0), (px, tlen)], fill=(56, 189, 248, 210), width=1)
+            draw.line([(px, h - tlen), (px, h)], fill=(56, 189, 248, 210), width=1)
+
+            # Left and Right border ticks
+            draw.line([(0, py), (tlen, py)], fill=(56, 189, 248, 210), width=1)
+            draw.line([(w - tlen, py), (w, py)], fill=(56, 189, 248, 210), width=1)
+
+        # 3. Border Ruler Badges (every 100 units on Top, Bottom, Left, Right)
         for u in range(100, 1000, 100):
             px = int(round(u / 1000.0 * w))
+            py = int(round(u / 1000.0 * h))
             lbl = f"{u}"
             bbox = font.getbbox(lbl)
             tw = bbox[2] - bbox[0]
             th = bbox[3] - bbox[1]
 
+            # Top badge
             badge_x = px - tw // 2
             draw.rectangle(
                 [(badge_x - 3, 0), (badge_x + tw + 3, th + 4)],
-                fill=(15, 23, 42, 225),
-                outline=(56, 189, 248, 130)
+                fill=(15, 23, 42, 235),
+                outline=(56, 189, 248, 140)
             )
-            draw.text((badge_x, 2), lbl, fill=(253, 224, 71, 255), font=font)
+            draw.text((badge_x, 1), lbl, fill=(253, 224, 71, 255), font=font)
 
-        # 4. Left Border Ruler Badges (y: 100, 200 ... 900)
-        for u in range(100, 1000, 100):
-            py = int(round(u / 1000.0 * h))
-            lbl = f"{u}"
-            bbox = font.getbbox(lbl)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
+            # Bottom badge (directly above/at taskbar)
+            draw.rectangle(
+                [(badge_x - 3, h - th - 5), (badge_x + tw + 3, h)],
+                fill=(15, 23, 42, 235),
+                outline=(56, 189, 248, 140)
+            )
+            draw.text((badge_x, h - th - 4), lbl, fill=(253, 224, 71, 255), font=font)
 
+            # Left badge
             badge_y = py - th // 2
             draw.rectangle(
                 [(0, badge_y - 2), (tw + 7, badge_y + th + 3)],
-                fill=(15, 23, 42, 225),
-                outline=(56, 189, 248, 130)
+                fill=(15, 23, 42, 235),
+                outline=(56, 189, 248, 140)
             )
-            draw.text((3, badge_y), lbl, fill=(253, 224, 71, 255), font=font)
+            draw.text((3, badge_y - 1), lbl, fill=(253, 224, 71, 255), font=font)
 
-        # 5. Non-intrusive intersection crosshairs '+' at 200, 400, 600, 800
-        cross_color = (56, 189, 248, 80)
-        for ux in (200, 400, 600, 800):
-            for uy in (200, 400, 600, 800):
-                cx = int(round(ux / 1000.0 * w))
-                cy = int(round(uy / 1000.0 * h))
-                # 6px crosshair
-                draw.line([(cx - 4, cy), (cx + 4, cy)], fill=cross_color, width=1)
-                draw.line([(cx, cy - 4), (cx, cy + 4)], fill=cross_color, width=1)
+            # Right badge
+            draw.rectangle(
+                [(w - tw - 7, badge_y - 2), (w, badge_y + th + 3)],
+                fill=(15, 23, 42, 235),
+                outline=(56, 189, 248, 140)
+            )
+            draw.text((w - tw - 4, badge_y - 1), lbl, fill=(253, 224, 71, 255), font=font)
 
-        # 6. Prominent Last Action Bullseye Marker (Visual Feedback)
+        # 4. Subtle Landmark Coordinate Pills across screen quadrants
+        landmarks = [(250, 250), (750, 250), (500, 500), (250, 750), (750, 750), (500, 940)]
+        for lx, ly in landmarks:
+            cx = int(round(lx / 1000.0 * w))
+            cy = int(round(ly / 1000.0 * h))
+            tag = f"{lx},{ly}"
+            tbox = font_small.getbbox(tag)
+            ttw, tth = tbox[2] - tbox[0], tbox[3] - tbox[1]
+            draw.rectangle(
+                [(cx - ttw // 2 - 3, cy - tth // 2 - 2), (cx + ttw // 2 + 3, cy + tth // 2 + 2)],
+                fill=(15, 23, 42, 190),
+                outline=(56, 189, 248, 90)
+            )
+            draw.text((cx - ttw // 2, cy - tth // 2 - 1), tag, fill=(203, 213, 225, 220), font=font_small)
+
+        # 5. Prominent Last Action Bullseye Marker (Visual Feedback)
         if last_action_coord:
             lx, ly = last_action_coord
             if 0 <= lx < w and 0 <= ly < h:
-                # Calculate normalized coordinates
                 nx = int(round(lx / float(w) * 1000.0))
                 ny = int(round(ly / float(h) * 1000.0))
 

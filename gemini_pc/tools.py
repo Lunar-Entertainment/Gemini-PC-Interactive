@@ -82,6 +82,44 @@ class DesktopTools:
         return f"Pressed key '{key}'"
 
     @staticmethod
+    def hold_key(key: str, duration: float = 1.0) -> str:
+        """
+        Holds a keyboard key down for a specified duration in seconds before releasing it.
+        Essential for game movement (holding 'w' to walk forward, 'shift' to sneak / avoid falling into lava, 'space' to jump, 'a'/'d' to strafe).
+        
+        Args:
+            key: Key name, such as 'w', 's', 'a', 'd', 'shift', 'space', 'ctrl', 'alt'.
+            duration: Number of seconds to hold the key down (e.g. 0.5 to 3.0).
+        """
+        controller.hold_key(key=key, duration=duration)
+        return f"Held key '{key}' down for {duration} seconds."
+
+    @staticmethod
+    def mouse_move_relative(dx: int, dy: int) -> str:
+        """
+        Moves the mouse cursor by a relative offset (dx, dy) using low-level hardware events.
+        CRITICAL FOR 3D GAMES (like Minecraft or FPS games) and camera rotation where absolute cursor movement does not work.
+        
+        Args:
+            dx: Horizontal pixel delta (negative = turn left, positive = turn right).
+            dy: Vertical pixel delta (negative = turn up / look up, positive = turn down / look down).
+        """
+        controller.mouse_move_relative(dx=dx, dy=dy)
+        return f"Moved mouse relatively by (dx={dx}, dy={dy})"
+
+    @staticmethod
+    def game_look(direction: str = "right", degrees: int = 45) -> str:
+        """
+        Turns the 3D camera in games (like Minecraft) smoothly in the specified direction.
+        
+        Args:
+            direction: 'left', 'right', 'up', or 'down'.
+            degrees: Approximate angle to turn in degrees (e.g. 45, 90, 180).
+        """
+        controller.game_look(direction=direction, degrees=degrees)
+        return f"Turned 3D camera {direction} by ~{degrees} degrees."
+
+    @staticmethod
     def key_combination(keys: str) -> str:
         """
         Presses multiple keys simultaneously as a hotkey combination.
@@ -207,9 +245,12 @@ ALL_DESKTOP_FUNCTIONS = [
     DesktopTools.mouse_click,
     DesktopTools.mouse_double_click,
     DesktopTools.move_mouse,
+    DesktopTools.mouse_move_relative,
+    DesktopTools.game_look,
     DesktopTools.drag_and_drop,
     DesktopTools.type_text,
     DesktopTools.press_key,
+    DesktopTools.hold_key,
     DesktopTools.key_combination,
     DesktopTools.scroll_screen,
     DesktopTools.open_application,

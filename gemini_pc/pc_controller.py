@@ -159,10 +159,77 @@ class PCController:
             "pagedown": "pagedown",
             "home": "home",
             "end": "end",
+            "shift": "shift",
+            "ctrl": "ctrl",
+            "alt": "alt",
         }
         normalized = key.lower().strip()
         actual_key = key_map.get(normalized, normalized)
         pyautogui.press(actual_key)
+
+    def hold_key(self, key: str, duration: float = 1.0):
+        """Holds a keyboard key down for a specified duration in seconds before releasing it.
+        Essential for game movement (holding 'w' to walk forward, 'shift' to sneak / avoid falling into lava,
+        'space' to jump, 'a'/'d' to strafe).
+        """
+        DesktopAttacher.ensure_desktop_access()
+        key_map = {
+            "enter": "enter",
+            "return": "enter",
+            "esc": "esc",
+            "escape": "esc",
+            "tab": "tab",
+            "space": "space",
+            "backspace": "backspace",
+            "del": "delete",
+            "delete": "delete",
+            "win": "win",
+            "windows": "win",
+            "shift": "shift",
+            "ctrl": "ctrl",
+            "alt": "alt",
+            "up": "up",
+            "down": "down",
+            "left": "left",
+            "right": "right",
+        }
+        normalized = key.lower().strip()
+        actual_key = key_map.get(normalized, normalized)
+        dur = min(max(duration, 0.05), 10.0)
+        pyautogui.keyDown(actual_key)
+        try:
+            time.sleep(dur)
+        finally:
+            pyautogui.keyUp(actual_key)
+
+    def mouse_move_relative(self, dx: int, dy: int):
+        """Moves the mouse cursor by a relative delta (dx, dy).
+        Uses low-level hardware mouse events (MOUSEEVENTF_MOVE), essential for 3D games
+        (e.g., Minecraft, FPS games) and camera rotation where absolute cursor movement does not work.
+        """
+        DesktopAttacher.ensure_desktop_access()
+        if sys.platform == "win32":
+            ctypes.windll.user32.mouse_event(0x0001, int(dx), int(dy), 0, 0)
+        else:
+            pyautogui.moveRel(int(dx), int(dy))
+
+    def game_look(self, direction: str = "right", degrees: int = 45):
+        """Turns the 3D camera in games (like Minecraft) by the specified angle in degrees.
+        Supports 'left', 'right', 'up', 'down'.
+        Translates degrees to hardware mouse deltas (~6 pixels per degree).
+        """
+        dir_lower = direction.lower().strip()
+        pixels = int(round(abs(degrees) * 6.0))
+        dx, dy = 0, 0
+        if "left" in dir_lower:
+            dx = -pixels
+        elif "right" in dir_lower:
+            dx = pixels
+        elif "up" in dir_lower:
+            dy = -pixels
+        elif "down" in dir_lower:
+            dy = pixels
+        self.mouse_move_relative(dx, dy)
 
     def hotkey(self, *keys):
         DesktopAttacher.ensure_desktop_access()
@@ -294,9 +361,14 @@ class PCController:
         if not target_hwnd:
             return False
 
-        # SW_RESTORE = 9, SW_SHOW = 5
-        user32.ShowWindowAsync(target_hwnd, 9)
+        # Windows foreground activation bypass: tap Alt key
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
+
+        # SW_RESTORE = 9
+        user32.ShowWindow(target_hwnd, 9)
         time.sleep(0.05)
+        user32.BringWindowToTop(target_hwnd)
         user32.SetForegroundWindow(target_hwnd)
 
         # If window was outside primary monitor, reposition to primary monitor
@@ -307,6 +379,12 @@ class PCController:
         bh = rect.bottom - rect.top
         if rect.left >= sw or rect.right <= 0 or rect.top >= sh:
             user32.MoveWindow(target_hwnd, 60, 60, min(bw, sw - 120), min(bh, sh - 120), True)
+
+        # Click center of window to ensure keyboard focus and 3D game mouse lock
+        time.sleep(0.15)
+        cx = max(rect.left + 50, min(rect.left + bw // 2, sw - 50))
+        cy = max(rect.top + 50, min(rect.top + bh // 2, sh - 50))
+        pyautogui.click(cx, cy)
 
         return True
 
