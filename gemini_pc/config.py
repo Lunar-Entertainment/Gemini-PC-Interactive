@@ -23,14 +23,9 @@ class Settings:
     GOOGLE_ACCOUNT_EMAIL: str = os.getenv("GOOGLE_ACCOUNT_EMAIL", "")
     IS_GOOGLE_ONE: bool = os.getenv("IS_GOOGLE_ONE", "true").lower() in ("true", "1", "yes")
 
-    # Raw API Keys (comma-separated or single)
-    RAW_API_KEYS: str = os.getenv("GEMINI_API_KEYS", os.getenv("GEMINI_API_KEY", "")).strip()
+    # Google Gemini API Key (Google AI Studio)
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "").strip()
 
 settings = Settings()
-
-# Initialize global key pool with configured keys
-from gemini_pc.key_pool import key_pool
-if settings.RAW_API_KEYS:
-    key_pool.set_keys([settings.RAW_API_KEYS])
 
 

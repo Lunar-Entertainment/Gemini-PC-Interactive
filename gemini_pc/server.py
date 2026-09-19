@@ -57,8 +57,6 @@ async def startup_event():
 from fastapi.responses import FileResponse, Response, RedirectResponse, HTMLResponse, StreamingResponse
 from gemini_pc.google_oauth import oauth_manager
 
-from gemini_pc.key_pool import key_pool
-
 class GoogleOAuthCredsRequest(BaseModel):
     client_id: str
     client_secret: str
@@ -68,13 +66,13 @@ async def get_status():
     sys_info = controller.get_system_info()
     oauth_profile = oauth_manager.get_user_profile()
     is_oauth_authed = oauth_manager.is_authenticated()
-    has_keys = key_pool.has_keys()
-    is_authed = has_keys or is_oauth_authed
+    has_api_key = bool(settings.GEMINI_API_KEY)
+    is_authed = has_api_key or is_oauth_authed
     user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
 
     auth_type = (
-        f"Key Pool ({key_pool.total_keys} keys, {key_pool.total_keys * 15} RPM)"
-        if has_keys
+        "API Key (15 RPM)"
+        if has_api_key
         else ("Google One" if is_oauth_authed else "none")
     )
 
@@ -84,19 +82,13 @@ async def get_status():
         "current_step": agent.current_step,
         "max_steps": agent.max_steps,
         "authenticated": is_authed,
-        "has_api_key": has_keys,
+        "has_api_key": has_api_key,
         "auth_type": auth_type,
         "default_model": settings.DEFAULT_MODEL,
         "google_account": user_email,
         "google_oauth": oauth_profile,
         "has_oauth_creds": oauth_manager.has_client_credentials(),
         "is_google_one": settings.IS_GOOGLE_ONE,
-        "key_pool": {
-            "total": key_pool.total_keys,
-            "available": key_pool.available_keys_count,
-            "rpm_capacity": key_pool.total_keys * 15,
-            "status": key_pool.get_status_summary(),
-        },
         "system_info": sys_info,
     }
 
@@ -221,8 +213,7 @@ async def set_api_key(req: ApiKeyRequest):
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty.")
 
-    # Update Key Pool
-    key_pool.set_keys([key])
+    settings.GEMINI_API_KEY = key
 
     # Persist to .env
     from gemini_pc.config import ENV_FILE
@@ -235,7 +226,8 @@ async def set_api_key(req: ApiKeyRequest):
                     k, v = line.split("=", 1)
                     env_dict[k.strip()] = v.strip()
 
-    env_dict["GEMINI_API_KEYS"] = key
+    env_dict.pop("GEMINI_API_KEYS", None)
+    env_dict["GEMINI_API_KEY"] = key
     with open(ENV_FILE, "w", encoding="utf-8") as f:
         for k, v in env_dict.items():
             f.write(f"{k}={v}\n")
@@ -243,12 +235,7 @@ async def set_api_key(req: ApiKeyRequest):
     return {
         "success": True,
         "has_api_key": True,
-        "key_pool": {
-            "total": key_pool.total_keys,
-            "available": key_pool.available_keys_count,
-            "rpm_capacity": key_pool.total_keys * 15,
-            "status": key_pool.get_status_summary(),
-        },
+        "auth_type": "API Key (15 RPM)",
     }
 
 @app.get("/api/screenshot")
@@ -352,13 +339,13 @@ async def websocket_endpoint(websocket: WebSocket):
         sys_info = controller.get_system_info()
         oauth_profile = oauth_manager.get_user_profile()
         is_oauth_authed = oauth_manager.is_authenticated()
-        has_keys = key_pool.has_keys()
-        is_authed = has_keys or is_oauth_authed
+        has_api_key = bool(settings.GEMINI_API_KEY)
+        is_authed = has_api_key or is_oauth_authed
         user_email = oauth_profile.get("email") or settings.GOOGLE_ACCOUNT_EMAIL
 
         auth_type = (
-            f"Key Pool ({key_pool.total_keys} keys, {key_pool.total_keys * 15} RPM)"
-            if has_keys
+            "API Key (15 RPM)"
+            if has_api_key
             else ("Google One" if is_oauth_authed else "none")
         )
 
@@ -371,19 +358,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 "step": agent.current_step,
                 "max_steps": agent.max_steps,
                 "authenticated": is_authed,
-                "has_api_key": has_keys,
+                "has_api_key": has_api_key,
                 "auth_type": auth_type,
                 "default_model": settings.DEFAULT_MODEL,
                 "google_account": user_email,
                 "google_oauth": oauth_profile,
                 "has_oauth_creds": oauth_manager.has_client_credentials(),
                 "is_google_one": settings.IS_GOOGLE_ONE,
-                "key_pool": {
-                    "total": key_pool.total_keys,
-                    "available": key_pool.available_keys_count,
-                    "rpm_capacity": key_pool.total_keys * 15,
-                    "status": key_pool.get_status_summary(),
-                },
                 "system_info": sys_info,
             }
         }))

@@ -163,20 +163,23 @@ class GeminiAgent:
 
     def _run_loop(self, goal: str, model_name: str, require_approval: bool):
         from gemini_pc.google_oauth import oauth_manager
-        from gemini_pc.key_pool import key_pool
+        from gemini_pc.rate_limiter import rate_limiter
         import re
 
         oauth_profile = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
         user_display = oauth_profile.get("name") or oauth_profile.get("email") or ""
 
-        if key_pool.has_keys():
-            auth_type = f"Key Pool ({key_pool.total_keys} active keys, {key_pool.total_keys * 15} RPM max)"
+        client = None
+        if settings.GEMINI_API_KEY:
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            auth_type = "API Key (15 RPM Free Tier)"
         elif oauth_manager.is_authenticated():
+            client = oauth_manager.get_client()
             auth_type = f"Google One ({user_display or 'Active'})"
         else:
             self.status = AgentStatus.ERROR
             self.emit("error", {
-                "message": "No API keys configured. Please add your Gemini API keys in Settings or .env to start.",
+                "message": "No API key configured. Please enter your Google Gemini API key in Settings or .env to start.",
                 "open_settings": True
             })
             self.emit("status_change", {"status": self.status.value})
@@ -228,161 +231,119 @@ class GeminiAgent:
             pruned.reverse()
             return pruned
 
-        # Active client and key from pool (selected per-turn for 60 RPM round-robin)
-        if key_pool.has_keys():
-            active_client = None
-            active_key_idx = -1
-            active_key_masked = "Pool"
-        elif oauth_manager.is_authenticated():
-            active_client = oauth_manager.get_client()
-            active_key_idx = -1
-            active_key_masked = "Google One"
-        else:
-            active_client = None
-            active_key_idx = -1
-            active_key_masked = "Unknown"
-
         def send_turn(current_chat, current_model, fn_resp_part, base_payload):
-            nonlocal active_client, active_key_idx, active_key_masked
+            nonlocal client
             models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
             last_err = None
-            max_rounds = max(key_pool.total_keys, 1) * len(models_to_try) + 1
 
-            saved_history = None
-            if current_chat:
+            # 1. Enforce 15 RPM safety with 0-latency instant burst activation
+            waited = rate_limiter.wait_for_slot()
+            if waited > 0.05:
+                self.emit("log", {
+                    "level": "info",
+                    "message": f"Rate-pacing: waited {waited:.2f}s to respect 15 RPM free tier..."
+                })
+
+            for candidate in models_to_try:
+                # Ensure chat session exists with candidate model
+                if not current_chat or getattr(current_chat, "_model", None) != candidate:
+                    saved_history = None
+                    if current_chat:
+                        try:
+                            saved_history = prune_chat_history(current_chat.get_history(), keep_recent_images=1)
+                        except Exception:
+                            pass
+                    current_chat = client.chats.create(
+                        model=candidate,
+                        config=gen_config,
+                        history=saved_history,
+                    )
+                    current_chat._model = candidate
+
+                # Build payload safely:
+                # Check if preceding turn was a model function call
+                expecting_fn_resp = False
                 try:
-                    raw_h = current_chat.get_history()
-                    if raw_h:
-                        saved_history = prune_chat_history(raw_h, keep_recent_images=1)
+                    hist = current_chat.get_history()
+                    if hist and hist[-1].role == "model":
+                        expecting_fn_resp = any(
+                            getattr(p, "function_call", None) is not None
+                            for p in (hist[-1].parts or [])
+                        )
                 except Exception:
                     pass
 
-            for attempt in range(max_rounds):
-                for candidate in models_to_try:
-                    # Keep saved_history up-to-date if current_chat has history
-                    if current_chat:
-                        try:
-                            raw_h = current_chat.get_history()
-                            if raw_h:
-                                saved_history = prune_chat_history(raw_h, keep_recent_images=1)
-                        except Exception:
-                            pass
+                if expecting_fn_resp and fn_resp_part is not None:
+                    payload = [fn_resp_part] + base_payload
+                else:
+                    payload = base_payload
 
-                    # Ensure chat session is bound to current active_client & candidate model
-                    if (
-                        not current_chat
-                        or getattr(current_chat, "_key_idx", None) != active_key_idx
-                        or getattr(current_chat, "_model", None) != candidate
-                    ):
-                        current_chat = active_client.chats.create(
-                            model=candidate,
-                            config=gen_config,
-                            history=saved_history,
-                        )
-                        current_chat._key_idx = active_key_idx
-                        current_chat._model = candidate
+                # Prune older screenshots on active chat to keep tokens minimal and responses sub-2s
+                try:
+                    current_chat._curated_history = prune_chat_history(
+                        current_chat.get_history(), keep_recent_images=1
+                    )
+                except Exception:
+                    pass
 
-                    # Build payload safely:
-                    # An API 400 INVALID_ARGUMENT error occurs if a function_response part is sent
-                    # when the preceding turn in the chat was NOT a model function call.
-                    expecting_fn_resp = False
-                    check_hist = None
-                    if current_chat:
-                        try:
-                            check_hist = current_chat.get_history()
-                        except Exception:
-                            pass
-                    if not check_hist:
-                        check_hist = saved_history
+                try:
+                    resp = current_chat.send_message(payload)
+                    return current_chat, resp, candidate
+                except Exception as ex:
+                    last_err = ex
+                    err_msg = str(ex).lower()
 
-                    if check_hist and check_hist[-1].role == "model":
-                        expecting_fn_resp = any(
-                            getattr(p, "function_call", None) is not None
-                            for p in (check_hist[-1].parts or [])
-                        )
+                    # Case A: Function response turn mismatch (400 INVALID_ARGUMENT)
+                    if "function response" in err_msg or "function call turn" in err_msg:
+                        self.emit("log", {
+                            "level": "warning",
+                            "message": "Function turn mismatch detected. Resetting chat turn and retrying..."
+                        })
+                        current_chat = None
+                        fn_resp_part = None
+                        continue
 
-                    if expecting_fn_resp and fn_resp_part is not None:
-                        payload = [fn_resp_part] + base_payload
-                    else:
-                        payload = base_payload
+                    # Case B: Rate Limit (429 RESOURCE_EXHAUSTED)
+                    if "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg:
+                        delay_to_wait = 20.0
+                        m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
+                        if m_delay:
+                            try:
+                                delay_to_wait = min(max(float(m_delay.group(1)), 5.0), 60.0)
+                            except Exception:
+                                pass
 
-                    # Prune older screenshots on active chat to protect token quota
-                    if current_chat:
-                        try:
-                            current_chat._curated_history = prune_chat_history(
-                                current_chat.get_history(), keep_recent_images=1
-                            )
-                        except Exception:
-                            pass
+                        rate_limiter.record_429(delay_to_wait)
+                        self.emit("log", {
+                            "level": "warning",
+                            "message": f"Quota limit reached (429). Waiting {delay_to_wait:.1f}s for 15 RPM reset..."
+                        })
+                        time.sleep(delay_to_wait)
+                        current_chat = None
+                        continue
 
-                    # Attempt send_message
-                    try:
-                        resp = current_chat.send_message(payload)
-                        if active_key_idx >= 0:
-                            key_pool.mark_key_success(active_key_idx)
-                        return current_chat, resp, candidate
+                    # Case C: 503 High Demand / Unavailable
+                    if "503" in err_msg or "unavailable" in err_msg:
+                        self.emit("log", {
+                            "level": "warning",
+                            "message": f"Model '{candidate}' high demand (503). Retrying with fallback model in 1.5s..."
+                        })
+                        time.sleep(1.5)
+                        current_chat = None
+                        continue
 
-                    except Exception as ex:
-                        last_err = ex
-                        err_msg = str(ex).lower()
+                    # Case D: 404 Model Not Found
+                    if "404" in err_msg or "not found" in err_msg:
+                        self.emit("log", {
+                            "level": "warning",
+                            "message": f"Model '{candidate}' not found. Trying next fallback model..."
+                        })
+                        current_chat = None
+                        continue
 
-                        # Case A: Function response turn mismatch (400 INVALID_ARGUMENT)
-                        if "function response" in err_msg or "function call turn" in err_msg:
-                            self.emit("log", {
-                                "level": "warning",
-                                "message": "Function turn mismatch detected. Resetting chat and continuing with visual context..."
-                            })
-                            current_chat = None
-                            saved_history = None
-                            fn_resp_part = None  # Clear orphaned response part
-                            continue
+                    raise ex
 
-                        # Case B: Rate Limit (429 RESOURCE_EXHAUSTED)
-                        if "429" in err_msg or "resource_exhausted" in err_msg or "quota" in err_msg:
-                            delay_to_wait = 30.0
-                            m_delay = re.search(r"retry\s*(?:delay|in)[\'\":\s]+([0-9\.]+)", err_msg)
-                            if m_delay:
-                                try:
-                                    delay_to_wait = min(max(float(m_delay.group(1)), 5.0), 60.0)
-                                except Exception:
-                                    pass
-
-                            if active_key_idx >= 0:
-                                key_pool.mark_key_rate_limited(active_key_idx, delay_to_wait)
-                                # Rotate to next key in pool
-                                active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
-                                self.emit("log", {
-                                    "level": "warning",
-                                    "message": (
-                                        f"Key rate-limited. Auto-rotated to Key #{active_key_idx + 1} ({active_key_masked}). "
-                                        f"{key_pool.available_keys_count}/{key_pool.total_keys} keys ready."
-                                    )
-                                })
-                            current_chat = None
-                            break  # Break model loop to retry on new key with preserved saved_history and fn_resp_part
-
-                        # Case C: 503 High Demand / Unavailable
-                        if "503" in err_msg or "unavailable" in err_msg:
-                            self.emit("log", {
-                                "level": "warning",
-                                "message": f"Model '{candidate}' high demand (503). Retrying in 2s with fallback model..."
-                            })
-                            time.sleep(2.0)
-                            current_chat = None
-                            continue
-
-                        # Case D: 404 Model Not Found
-                        if "404" in err_msg or "not found" in err_msg:
-                            self.emit("log", {
-                                "level": "warning",
-                                "message": f"Model '{candidate}' not found. Trying next fallback model..."
-                            })
-                            current_chat = None
-                            continue
-
-                        raise ex
-
-            raise last_err
+            raise last_err or RuntimeError("Failed to communicate with Gemini API.")
 
         while self.current_step < self.max_steps and not self.stop_requested:
             # Handle pause state
@@ -470,14 +431,7 @@ class GeminiAgent:
                     response={"output": last_tool_output or "Executed"}
                 )
 
-            # Rotate to next key in pool for continuous round-robin up to 60 RPM
-            if key_pool.has_keys():
-                active_client, active_key_idx, active_key_masked = key_pool.get_active_client()
-            elif active_client is None and oauth_manager.is_authenticated():
-                active_client = oauth_manager.get_client()
-
-            key_label = f"Key #{active_key_idx + 1} [{active_key_masked}]" if active_key_idx >= 0 else active_key_masked
-            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step}, {key_label})..."})
+            self.emit("log", {"level": "info", "message": f"Consulting Gemini {active_model} (Step {self.current_step})..."})
 
             try:
                 chat, response, used_model = send_turn(chat, active_model, fn_resp_part, base_payload)
@@ -487,8 +441,8 @@ class GeminiAgent:
                 err_str = str(e)
                 if "429" in err_str or "resource_exhausted" in err_str.lower():
                     friendly_msg = (
-                        f"Quota Exceeded (429 RESOURCE_EXHAUSTED): All keys in the pool are currently on cooldown. "
-                        f"Please wait a moment for the keys to reset."
+                        "Quota Exceeded (429 RESOURCE_EXHAUSTED): Free-tier 15 RPM limit reached. "
+                        "Please wait a moment for the quota window to reset."
                     )
                     self.emit("error", {"message": friendly_msg})
                 else:
