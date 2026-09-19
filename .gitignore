@@ -6,3 +6,6 @@ __pycache__/
 .DS_Store
 google_tokens.json
 client_secrets.json
+build/
+dist/
+*.spec

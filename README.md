@@ -41,10 +41,18 @@
 
 ## 🚀 Quick Start
 
-### 1. Launch with One Click
-Double-click **`run.bat`** in the project folder. It will launch the server and automatically open your default browser to `http://localhost:8080`.
+### 1. Standalone Windows Desktop App (.exe)
+You can run the application directly without needing Python installed:
+- Simply double-click **`dist\GeminiPCInteractive.exe`** (or create a shortcut on your Desktop).
+- It will automatically initialize the local service, open your default browser to the interactive dashboard, and keep your settings and API keys portable in `.env`.
 
-### 2. Manual Command Line Launch
+To rebuild the `.exe` at any time with the latest updates:
+- Double-click **`build.cmd`** or run **`.\build.ps1`** in PowerShell.
+
+### 2. Launch with Batch Script
+Double-click **`run.bat`** (or **`run.cmd`**) in the project folder. It will launch the server and automatically open your default browser to `http://localhost:8080`.
+
+### 3. Manual Command Line Launch
 ```powershell
 # Activate the virtual environment
 .\venv\Scripts\activate

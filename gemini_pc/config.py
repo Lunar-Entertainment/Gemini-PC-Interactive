@@ -1,10 +1,22 @@
+import sys
 import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Base directory
-BASE_DIR = Path(__file__).resolve().parent.parent
-ENV_FILE = BASE_DIR / ".env"
+# Detect whether running inside a PyInstaller frozen bundle or source tree
+if getattr(sys, 'frozen', False):
+    # PyInstaller unpacks bundled resources (like web/) into sys._MEIPASS
+    BUNDLE_DIR = Path(getattr(sys, '_MEIPASS', sys.executable)).resolve()
+    # The actual folder where the .exe file is placed by the user
+    APP_DIR = Path(sys.executable).resolve().parent
+else:
+    BUNDLE_DIR = Path(__file__).resolve().parent.parent
+    APP_DIR = BUNDLE_DIR
+
+BASE_DIR = BUNDLE_DIR
+ENV_FILE = APP_DIR / ".env"
+if not ENV_FILE.exists() and (BUNDLE_DIR / ".env").exists():
+    ENV_FILE = BUNDLE_DIR / ".env"
 
 # Load environment variables
 load_dotenv(dotenv_path=ENV_FILE)

@@ -27,7 +27,11 @@ def open_browser():
     except Exception:
         pass
 
+import multiprocessing
+
 def main():
+    multiprocessing.freeze_support()
+
     # Detect available port
     actual_port = find_available_port(settings.HOST, settings.PORT)
     settings.PORT = actual_port
@@ -36,19 +40,19 @@ def main():
     print("       GEMINI PC INTERACTIVE - AI DESKTOP AGENT")
     print("=" * 60)
     print(f"Host: {settings.HOST} | Port: {settings.PORT}")
-    from gemini_pc.google_oauth import oauth_manager
-    user_prof = oauth_manager.get_user_profile() if oauth_manager.is_authenticated() else {}
-    auth_label = f"Connected ({user_prof.get('email', 'Active')})" if oauth_manager.is_authenticated() else "Not Connected (Sign in via Settings)"
-    print(f"Google One Account: {auth_label}")
+    api_key_configured = bool(settings.GEMINI_API_KEY)
+    auth_label = "Configured (15 RPM Free Tier & Instant Activation)" if api_key_configured else "Not Configured (Enter Key in Settings)"
+    print(f"Gemini API: {auth_label}")
     print("=" * 60)
 
     # Launch browser automatically
     browser_thread = threading.Thread(target=open_browser, daemon=True)
     browser_thread.start()
 
-    # Run Uvicorn server
+    # Run Uvicorn server passing app instance directly for PyInstaller compatibility
+    from gemini_pc.server import app as fastapi_app
     uvicorn.run(
-        "gemini_pc.server:app",
+        fastapi_app,
         host=settings.HOST,
         port=settings.PORT,
         log_level="info",
