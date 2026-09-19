@@ -1,12 +1,18 @@
 import os
 import sys
-import webbrowser
+import socket
 import threading
 import time
+import webbrowser
+import multiprocessing
 import uvicorn
 from gemini_pc.config import settings
 
-import socket
+# Safely handle stdout/stderr when running as a windowed application without a console
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
 
 def find_available_port(host: str, start_port: int) -> int:
     for port in range(start_port, start_port + 20):
@@ -18,16 +24,15 @@ def find_available_port(host: str, start_port: int) -> int:
                 continue
     return start_port
 
-def open_browser():
-    time.sleep(1.2)
-    url = f"http://{settings.HOST}:{settings.PORT}"
-    print(f"\n[Gemini PC Interactive] Dashboard ready at {url}")
-    try:
-        webbrowser.open(url)
-    except Exception:
-        pass
-
-import multiprocessing
+def wait_for_server(host: str, port: int, timeout: float = 6.0) -> bool:
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=0.2):
+                return True
+        except (OSError, ConnectionRefusedError):
+            time.sleep(0.05)
+    return False
 
 def main():
     multiprocessing.freeze_support()
@@ -36,28 +41,58 @@ def main():
     actual_port = find_available_port(settings.HOST, settings.PORT)
     settings.PORT = actual_port
 
-    print("=" * 60)
-    print("       GEMINI PC INTERACTIVE - AI DESKTOP AGENT")
-    print("=" * 60)
-    print(f"Host: {settings.HOST} | Port: {settings.PORT}")
-    api_key_configured = bool(settings.GEMINI_API_KEY)
-    auth_label = "Configured (15 RPM Free Tier & Instant Activation)" if api_key_configured else "Not Configured (Enter Key in Settings)"
-    print(f"Gemini API: {auth_label}")
-    print("=" * 60)
+    target_url = f"http://{settings.HOST}:{settings.PORT}"
 
-    # Launch browser automatically
-    browser_thread = threading.Thread(target=open_browser, daemon=True)
-    browser_thread.start()
+    use_browser_mode = "--browser" in sys.argv
+    use_headless_mode = "--headless" in sys.argv
 
-    # Run Uvicorn server passing app instance directly for PyInstaller compatibility
-    from gemini_pc.server import app as fastapi_app
-    uvicorn.run(
-        fastapi_app,
-        host=settings.HOST,
-        port=settings.PORT,
-        log_level="info",
-        reload=False
-    )
+    # Start Uvicorn in background daemon thread
+    def run_uvicorn():
+        from gemini_pc.server import app as fastapi_app
+        config = uvicorn.Config(
+            fastapi_app,
+            host=settings.HOST,
+            port=settings.PORT,
+            log_level="warning",
+            reload=False
+        )
+        server = uvicorn.Server(config)
+        server.run()
+
+    server_thread = threading.Thread(target=run_uvicorn, daemon=True)
+    server_thread.start()
+
+    # Wait for local server to accept connections
+    wait_for_server(settings.HOST, settings.PORT)
+
+    if use_headless_mode:
+        print(f"[Gemini PC Interactive] Server running at {target_url} (Headless)")
+        server_thread.join()
+        return
+
+    if use_browser_mode:
+        webbrowser.open(target_url)
+        print(f"[Gemini PC Interactive] Browser opened at {target_url}")
+        server_thread.join()
+        return
+
+    # Default: Native standalone desktop application window
+    try:
+        import webview
+        window = webview.create_window(
+            title="Gemini PC Interactive",
+            url=target_url,
+            width=1440,
+            height=900,
+            min_size=(1024, 700),
+            background_color="#090d16",
+            text_select=True
+        )
+        webview.start()
+    except Exception as ex:
+        # Fallback to browser if webview has any system-level issue
+        webbrowser.open(target_url)
+        server_thread.join()
 
 if __name__ == "__main__":
     main()
