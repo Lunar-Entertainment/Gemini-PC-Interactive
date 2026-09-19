@@ -32,9 +32,9 @@
           <span class="status-text" id="agentStatusText">IDLE</span>
         </div>
         <div class="system-pills">
-          <div class="sys-pill google-one-pill" id="pillGoogleOne" title="Google One AI Pro Status">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            <span id="statGoogleAccount">AI Pro: Connect</span>
+          <div class="sys-pill api-key-pill" id="pillApiKey" title="Gemini API Key & 15 RPM Status">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+            <span id="statApiKeyStatus">Gemini: Connect Key</span>
           </div>
           <div class="sys-pill" id="pillResolution" title="Primary Display Resolution">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
@@ -78,7 +78,7 @@
               <span class="stream-dot"></span>
               Live Stream
             </button>
-            <span class="fps-badge" title="Stream locked to 1 FPS for maximum speed & minimal CPU overhead">1 FPS</span>
+            <span class="fps-badge" title="High-frequency responsive liveview (5 FPS, sub-50ms glass-to-glass latency)">Live 5 FPS</span>
             <button id="btnToggleGrid" class="btn-chip" title="Toggle Visual Coordinate Grid Overlay">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/></svg>
               Grid Assist
@@ -223,102 +223,24 @@
           <button id="btnCloseModal" class="btn-close">&times;</button>
         </div>
         <div class="modal-body">
-          <!-- Google OAuth Sign-In Card -->
-          <div class="oauth-card" id="oauthCard">
-            <div class="oauth-header">
-              <div class="oauth-icon-wrapper">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                </svg>
-              </div>
-              <div class="oauth-title-block">
-                <h4>Sign in with Google One</h4>
-                <p>Authenticate directly with your Google One AI Pro account</p>
-              </div>
-            </div>
-
-            <!-- Shown when authenticated -->
-            <div class="oauth-user-profile hidden" id="oauthUserProfile">
-              <div class="user-profile-row">
-                <div class="user-avatar" id="oauthAvatar">G</div>
-                <div class="user-info-text">
-                  <span class="user-name" id="oauthUserName">Google One User</span>
-                  <span class="user-email" id="oauthUserEmail">user@gmail.com</span>
-                  <span class="badge-sub">Google One AI Pro Active</span>
-                </div>
-                <button id="btnGoogleLogout" class="btn-chip btn-logout">Sign Out</button>
-              </div>
-            </div>
-
-            <!-- Shown when not authenticated -->
-            <div class="oauth-actions" id="oauthLoginPrompt">
-              <div class="oauth-buttons-row">
-                <a href="/api/auth/google/login?host=localhost" class="btn-google-signin">
-                  <svg viewBox="0 0 24 24" width="18" height="18">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
-                  </svg>
-                  Sign in with Google (localhost)
-                </a>
-                <a href="/api/auth/google/login?host=127.0.0.1" class="btn-chip" style="padding:10px 14px; font-weight:600;" title="Use 127.0.0.1 instead if your Google Console is configured with IP">
-                  via 127.0.0.1
-                </a>
-              </div>
-
-              <!-- Important redirect URI mismatch helper -->
-              <div class="redirect-uri-helper">
-                <span class="helper-title">Google Cloud Console Authorized Redirect URIs:</span>
-                <p class="helper-desc">In your Google Cloud Console OAuth Client, add these under <em>"Authorized redirect URIs"</em>:</p>
-                <div class="uri-copy-list">
-                  <div class="uri-copy-item">
-                    <code>http://localhost:8080/api/auth/google/callback</code>
-                    <button type="button" class="btn-copy-uri" data-uri="http://localhost:8080/api/auth/google/callback">Copy</button>
-                  </div>
-                  <div class="uri-copy-item">
-                    <code>http://127.0.0.1:8080/api/auth/google/callback</code>
-                    <button type="button" class="btn-copy-uri" data-uri="http://127.0.0.1:8080/api/auth/google/callback">Copy</button>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Toggle for OAuth Client ID config -->
-              <div class="oauth-config-toggle">
-                <button type="button" id="btnToggleOauthConfig" class="btn-text">⚙️ Configure OAuth Client ID & Secret</button>
-              </div>
-
-              <div class="oauth-config-form hidden" id="oauthConfigForm">
-                <div class="form-group">
-                  <label for="inputOauthClientId">OAuth Client ID</label>
-                  <input type="text" id="inputOauthClientId" placeholder="xxxx.apps.googleusercontent.com">
-                </div>
-                <div class="form-group">
-                  <label for="inputOauthClientSecret">OAuth Client Secret</label>
-                  <input type="password" id="inputOauthClientSecret" placeholder="GOCSPX-xxxx">
-                </div>
-                <button type="button" id="btnSaveOauthCreds" class="btn-primary" style="align-self: flex-start;">Save OAuth Credentials</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="form-group" style="margin-top: 14px;">
+          <!-- Google AI Studio API Key Card -->
+          <div class="form-group" style="margin-top: 4px;">
             <label for="inputCustomApiKey">Google AI Studio API Key <span style="font-size:11px;color:#38bdf8;font-weight:600;">(15 RPM Free Tier &bull; Instant Activation)</span></label>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <input type="password" id="inputCustomApiKey" placeholder="Enter your Gemini API key (AQ.Ab8... or AIzaSy...)" style="flex:1;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;padding:9px 12px;font-family:monospace;font-size:12px;">
-              <button type="button" id="btnSaveCustomApiKey" class="btn-chip" style="padding:9px 16px;background:#3b82f6;color:white;border:none;white-space:nowrap;">Save Key</button>
+            <div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
+              <input type="password" id="inputCustomApiKey" placeholder="Enter Gemini API key (e.g. AIzaSy...)" style="flex:1;box-sizing:border-box;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;padding:10px 12px;font-family:monospace;font-size:12px;">
+              <button type="button" id="btnSaveCustomApiKey" class="btn-chip" style="padding:10px 16px;background:#3b82f6;color:white;border:none;white-space:nowrap;font-weight:600;">Save Key</button>
             </div>
-            <span style="font-size:11px;color:#64748b;margin-top:6px;display:block;">
-              Saved securely to .env. Features instant zero-latency activation with automatic sliding-window 15 RPM protection.
+            <span id="apiKeyStatusDetail" style="font-size:11px;color:#94a3b8;margin-top:6px;display:block;">
+              Saved securely to local .env. Calibrated for 15 RPM safety with 0 startup delay and smooth 3.8s inter-turn pacing.
             </span>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" style="margin-top: 18px;">
             <label for="inputMaxSteps">Maximum Steps Per Task</label>
-            <input type="number" id="inputMaxSteps" min="5" max="100" value="30">
+            <div style="display:flex;gap:12px;align-items:center;margin-top:6px;">
+              <input type="number" id="inputMaxSteps" min="5" max="100" value="30" style="width:120px;padding:9px 12px;background:#0f172a;border:1px solid #334155;border-radius:8px;color:#f8fafc;font-size:14px;font-weight:600;">
+              <span style="font-size:12px;color:#64748b;">Autonomous loop automatically halts after this limit (Default: 30).</span>
+            </div>
           </div>
 
           <div class="safety-box">

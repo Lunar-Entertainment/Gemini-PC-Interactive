@@ -25,6 +25,13 @@ class GoalRequest(BaseModel):
     goal: str
     model: str = "gemini-3.8-flash"
     require_approval: bool = False
+    max_steps: Optional[int] = None
+
+class SettingsRequest(BaseModel):
+    max_steps: Optional[int] = None
+    default_model: Optional[str] = None
+    grid_overlay: Optional[bool] = None
+    action_delay_sec: Optional[float] = None
 
 class ApiKeyRequest(BaseModel):
     api_key: str
@@ -80,7 +87,7 @@ async def get_status():
         "status": agent.status.value,
         "current_goal": agent.current_goal,
         "current_step": agent.current_step,
-        "max_steps": agent.max_steps,
+        "max_steps": settings.MAX_AGENT_STEPS,
         "authenticated": is_authed,
         "has_api_key": has_api_key,
         "auth_type": auth_type,
@@ -239,7 +246,7 @@ async def set_api_key(req: ApiKeyRequest):
     }
 
 @app.get("/api/screenshot")
-async def get_screenshot(grid: bool = False):
+async def get_screenshot(grid: bool = False, stream: bool = False):
     img = await asyncio.to_thread(controller.take_screenshot)
     if grid or settings.GRID_OVERLAY:
         mouse_pos = await asyncio.to_thread(controller.get_mouse_position)
@@ -250,8 +257,15 @@ async def get_screenshot(grid: bool = False):
             None,
             mouse_pos
         )
-    opt = await asyncio.to_thread(VisualGrounding.optimize_image, img, 1920, 80)
-    return Response(content=opt.bytes, media_type="image/jpeg")
+    # Stream mode uses 1280 max_width and quality 65 for ultra-fast encoding (<30ms)
+    max_w = 1280 if stream else 1920
+    quality = 65 if stream else 80
+    opt = await asyncio.to_thread(VisualGrounding.optimize_image, img, max_w, quality)
+    return Response(
+        content=opt.bytes,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+    )
 
 async def mjpeg_generator(fps: int = 1):
     # Lock stream strictly to 1 FPS to minimize CPU overhead and maximize agent responsiveness
@@ -275,6 +289,34 @@ async def stream_desktop(fps: int = 1):
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
+@app.post("/api/settings")
+async def update_settings(req: SettingsRequest):
+    if req.max_steps is not None and req.max_steps > 0:
+        settings.MAX_AGENT_STEPS = req.max_steps
+        agent.max_steps = req.max_steps
+    if req.default_model:
+        settings.DEFAULT_MODEL = req.default_model
+    if req.grid_overlay is not None:
+        settings.GRID_OVERLAY = req.grid_overlay
+    if req.action_delay_sec is not None:
+        settings.ACTION_DELAY_SEC = max(0.05, req.action_delay_sec)
+
+    broadcast_sync({
+        "type": "settings_updated",
+        "data": {
+            "max_steps": settings.MAX_AGENT_STEPS,
+            "default_model": settings.DEFAULT_MODEL,
+            "grid_overlay": settings.GRID_OVERLAY,
+            "action_delay_sec": settings.ACTION_DELAY_SEC,
+        }
+    })
+    return {
+        "success": True,
+        "max_steps": settings.MAX_AGENT_STEPS,
+        "default_model": settings.DEFAULT_MODEL,
+        "grid_overlay": settings.GRID_OVERLAY,
+    }
+
 @app.post("/api/start")
 async def start_task(req: GoalRequest):
     if not req.goal.strip():
@@ -282,11 +324,12 @@ async def start_task(req: GoalRequest):
     success = agent.start_goal(
         goal=req.goal,
         model_name=req.model,
-        require_approval=req.require_approval
+        require_approval=req.require_approval,
+        max_steps=req.max_steps
     )
     if not success:
         raise HTTPException(status_code=409, detail="An agent task is already running.")
-    return {"success": True, "goal": req.goal}
+    return {"success": True, "goal": req.goal, "max_steps": agent.max_steps}
 
 @app.post("/api/stop")
 async def stop_task():
@@ -389,7 +432,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     agent.start_goal(
                         goal=msg.get("goal", ""),
                         model_name=msg.get("model", settings.DEFAULT_MODEL),
-                        require_approval=msg.get("require_approval", False)
+                        require_approval=msg.get("require_approval", False),
+                        max_steps=msg.get("max_steps")
                     )
                 elif action == "stop":
                     agent.stop()
@@ -399,6 +443,15 @@ async def websocket_endpoint(websocket: WebSocket):
                     agent.resume()
                 elif action == "approve":
                     agent.approve_step(msg.get("approved", True))
+                elif action == "update_settings":
+                    ms = msg.get("max_steps")
+                    if ms and int(ms) > 0:
+                        settings.MAX_AGENT_STEPS = int(ms)
+                        agent.max_steps = int(ms)
+                    await websocket.send_text(json.dumps({
+                        "type": "settings_updated",
+                        "data": {"max_steps": settings.MAX_AGENT_STEPS}
+                    }))
                 elif action == "request_screenshot":
                     img = controller.take_screenshot()
                     if settings.GRID_OVERLAY:

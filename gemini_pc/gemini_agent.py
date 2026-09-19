@@ -51,12 +51,12 @@ TWO-STAGE "CROP & ZOOM" FOR SUB-PIXEL ACCURACY:
   - Stage 2: The system automatically crops a 300x300px box around that area, overlays a fine 0-100 micro-grid, and calculates sub-pixel accuracy before executing the click.
 
 ACCURACY & TARGETING RULES:
-1. Dead-Center Targeting & Border Rulers:
-   - Locate the visual boundaries of your target element.
-   - Use the nearest border ruler (e.g. bottom border for taskbar icons at y=960-990) and tick marks to find the center [x, y].
-   - For small or dense targets, ALWAYS prefer `precision_click(x, y, target_description)`.
+1. Mandatory Precision Click for Desktop Controls:
+   - Whenever clicking any button, icon, link, input field, tab, menu, checkbox, or interactive control:
+     ALWAYS call `precision_click(x, y, target_description)`!
+   - Do NOT use plain `mouse_click` for UI controls. `precision_click` automatically executes Stage 2 Crop & Zoom with the 0-100 micro-grid to guarantee 100% dead-center targeting.
 2. Form Input & Focus:
-   - Before typing into any text input or search bar, you MUST click inside it first to ensure it has focus.
+   - Before typing into any text input or search bar, you MUST click inside it first (via `precision_click`) to ensure it has focus.
    - Set press_enter=True when submitting a search query or command.
 3. Window Management & Switching:
    - When asked to switch to, open, or click an application window that is already open, ALWAYS prefer calling `focus_window(window_title)` (e.g. `focus_window("Minecraft")` or `focus_window("Calculator")`).
@@ -115,12 +115,16 @@ class GeminiAgent:
         except Exception as e:
             logger.warning(f"Could not initialize pynput keyboard listener: {e}")
 
-    def start_goal(self, goal: str, model_name: Optional[str] = None, require_approval: bool = False):
+    def start_goal(self, goal: str, model_name: Optional[str] = None, require_approval: bool = False, max_steps: Optional[int] = None):
         if self.status == AgentStatus.RUNNING:
             return False
 
+        from gemini_pc.rate_limiter import rate_limiter
+        rate_limiter.on_new_goal()
+
         self.current_goal = goal.strip()
         self.current_step = 0
+        self.max_steps = max_steps or settings.MAX_AGENT_STEPS
         self.stop_requested = False
         self.paused = False
         self.pending_approval_tool = None
@@ -138,10 +142,12 @@ class GeminiAgent:
         return True
 
     def stop(self):
+        from gemini_pc.rate_limiter import rate_limiter
         self.stop_requested = True
         self.paused = False
         self.status = AgentStatus.STOPPED
         self.approval_event.set()
+        rate_limiter.reset_transient_cooldown()
         self.emit("status_change", {"status": self.status.value})
 
     def pause(self):
@@ -236,8 +242,11 @@ class GeminiAgent:
             models_to_try = [current_model] + [m for m in RELIABLE_FALLBACK_MODELS if m != current_model]
             last_err = None
 
-            # 1. Enforce 15 RPM safety with 0-latency instant burst activation
-            waited = rate_limiter.wait_for_slot()
+            # 1. Enforce 15 RPM safety with 0-latency instant burst activation and immediate abort
+            waited = rate_limiter.wait_for_slot(abort_check=lambda: self.stop_requested)
+            if self.stop_requested:
+                return current_chat, None, current_model
+
             if waited > 0.05:
                 self.emit("log", {
                     "level": "info",
@@ -245,6 +254,9 @@ class GeminiAgent:
                 })
 
             for candidate in models_to_try:
+                if self.stop_requested:
+                    return current_chat, None, candidate
+
                 # Ensure chat session exists with candidate model
                 if not current_chat or getattr(current_chat, "_model", None) != candidate:
                     saved_history = None
@@ -286,10 +298,15 @@ class GeminiAgent:
                 except Exception:
                     pass
 
+                if self.stop_requested:
+                    return current_chat, None, candidate
+
                 try:
                     resp = current_chat.send_message(payload)
                     return current_chat, resp, candidate
                 except Exception as ex:
+                    if self.stop_requested:
+                        return current_chat, None, candidate
                     last_err = ex
                     err_msg = str(ex).lower()
 
@@ -318,7 +335,12 @@ class GeminiAgent:
                             "level": "warning",
                             "message": f"Quota limit reached (429). Waiting {delay_to_wait:.1f}s for 15 RPM reset..."
                         })
-                        time.sleep(delay_to_wait)
+                        slept = 0.0
+                        while slept < delay_to_wait and not self.stop_requested:
+                            time.sleep(0.1)
+                            slept += 0.1
+                        if self.stop_requested:
+                            return current_chat, None, candidate
                         current_chat = None
                         continue
 
@@ -328,7 +350,12 @@ class GeminiAgent:
                             "level": "warning",
                             "message": f"Model '{candidate}' high demand (503). Retrying with fallback model in 1.5s..."
                         })
-                        time.sleep(1.5)
+                        slept = 0.0
+                        while slept < 1.5 and not self.stop_requested:
+                            time.sleep(0.1)
+                            slept += 0.1
+                        if self.stop_requested:
+                            return current_chat, None, candidate
                         current_chat = None
                         continue
 
@@ -343,6 +370,8 @@ class GeminiAgent:
 
                     raise ex
 
+            if self.stop_requested:
+                return current_chat, None, current_model
             raise last_err or RuntimeError("Failed to communicate with Gemini API.")
 
         while self.current_step < self.max_steps and not self.stop_requested:
@@ -444,9 +473,13 @@ class GeminiAgent:
 
             try:
                 chat, response, used_model = send_turn(chat, active_model, fn_resp_part, base_payload)
+                if self.stop_requested or response is None:
+                    break
                 if used_model != active_model:
                     active_model = used_model
             except Exception as e:
+                if self.stop_requested:
+                    break
                 err_str = str(e)
                 if "429" in err_str or "resource_exhausted" in err_str.lower():
                     friendly_msg = (
@@ -639,7 +672,9 @@ class GeminiAgent:
                     )
 
                     stage2_img_part = types.Part.from_bytes(data=zoom_opt.bytes, mime_type="image/jpeg")
-                    rate_limiter.wait_for_slot()
+                    rate_limiter.wait_for_slot(abort_check=lambda: self.stop_requested)
+                    if self.stop_requested:
+                        break
                     stage2_resp = client.models.generate_content(
                         model=active_model,
                         contents=[stage2_img_part, stage2_prompt],
@@ -686,6 +721,10 @@ class GeminiAgent:
                 if fn_args.get("x", 0) > 0 or fn_args.get("y", 0) > 0:
                     fn_args["x"], fn_args["y"] = adjust_coords(fn_args.get("x", 0), fn_args.get("y", 0))
 
+            # Stop check before tool execution
+            if self.stop_requested:
+                break
+
             # Execute tool call
             tool_fn = TOOL_DISPATCHER.get(fn_name)
             tool_output = ""
@@ -709,17 +748,22 @@ class GeminiAgent:
             last_fn_name = fn_name
             last_tool_output = tool_output
 
-            # Action delay
-            time.sleep(settings.ACTION_DELAY_SEC)
+            # Action delay with abort check
+            slept = 0.0
+            while slept < settings.ACTION_DELAY_SEC and not self.stop_requested:
+                time.sleep(min(0.05, settings.ACTION_DELAY_SEC - slept))
+                slept += 0.05
 
-        if self.current_step >= self.max_steps and self.status == AgentStatus.RUNNING:
+        if self.stop_requested:
+            self.status = AgentStatus.STOPPED
+            self.emit("log", {"level": "warning", "message": "Agent task stopped by user request."})
+        elif self.current_step >= self.max_steps and self.status == AgentStatus.RUNNING:
             self.status = AgentStatus.FINISHED
             self.emit("task_completed", {
                 "summary": f"Reached maximum configured steps ({self.max_steps}).",
                 "success": False
             })
-
-        if self.status != AgentStatus.ERROR and self.status != AgentStatus.FINISHED:
+        elif self.status != AgentStatus.ERROR and self.status != AgentStatus.FINISHED and self.status != AgentStatus.STOPPED:
             self.status = AgentStatus.IDLE
 
         self.emit("status_change", {"status": self.status.value})

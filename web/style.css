@@ -219,6 +219,17 @@ body {
   color: var(--text-muted);
 }
 
+.api-key-pill {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.api-key-pill:hover {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.4);
+  color: #93c5fd;
+}
+
 .header-right {
   display: flex;
   align-items: center;
