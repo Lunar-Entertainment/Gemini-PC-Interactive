@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import time
 import threading
 import logging
@@ -29,44 +31,42 @@ class AgentStatus(str, Enum):
 SYSTEM_INSTRUCTION = """You are Gemini PC Interactive, an autonomous AI desktop agent capable of seeing the user's computer screen and controlling the PC with high precision and speed.
 
 COORDINATE SYSTEM (0 - 1000 NORMALIZED SCALE):
-- All screen coordinates (x, y) MUST use a 0 to 1000 normalized scale:
+- All screen coordinates (x, y) use a 0 to 1000 normalized scale:
   - x: 0 = leftmost edge, 1000 = rightmost edge. Center x is 500.
   - y: 0 = topmost edge, 1000 = bottommost edge. Center y is 500.
   - (0, 0) is top-left, (1000, 1000) is bottom-right.
-- The screenshot displays reference ruler tick badges labeled from 0 to 1000 along ALL 4 BORDERS (Top, Bottom, Left, and Right), with tick marks every 25 units.
+- Reference ruler tick badges labeled from 0 to 1000 run along ALL 4 BORDERS (Top, Bottom, Left, and Right), with tick marks every 25 units.
 - Golden yellow lines mark the center axes at x=500 and y=500.
 - Small landmark pills show local coordinates across quadrants (e.g. [250,250], [750,250], [500,500], [250,750], [750,750], [500,940]).
-- ALL coordinates you pass to tools (mouse_click, mouse_double_click, move_mouse, mouse_right_click, drag_and_drop, scroll_screen) MUST use this 0-1000 scale.
-- The system automatically translates your 0-1000 coordinates to physical screen pixels with sub-pixel precision.
+
+SYNTHETIC MOUSE CURSOR & VISUAL GROUNDING:
+- The actual current mouse cursor is drawn directly onto the screenshot as a vibrant cyan crosshair badge labeled `CURSOR: [x, y]`.
+- You can move or click relative to this position using `move_by(dx, dy)` or `click_by(dx, dy)`.
+- If a red bullseye marker labeled "LAST CLICK: [x=..., y=...]" is visible, it shows your previous action's exact location for closed-loop visual feedback.
+
+TWO-STAGE "CROP & ZOOM" FOR SUB-PIXEL ACCURACY:
+- For small desktop elements (calculator buttons, toolbar icons, checkboxes, close buttons, browser tabs, menus, table cells):
+  Call `precision_click(x, y, target_description)`.
+  - Stage 1: Provide the approximate area [x, y] on the 0-1000 scale and a concise description of the target (e.g. `precision_click(x=380, y=620, target_description="multiply key")`).
+  - Stage 2: The system automatically crops a 300x300px box around that area, overlays a fine 0-100 micro-grid, and calculates sub-pixel accuracy before executing the click.
 
 ACCURACY & TARGETING RULES:
 1. Dead-Center Targeting & Border Rulers:
-   - Carefully locate the visual boundaries of your target element (button, icon, input field, tab, menu).
-   - Use the nearest border ruler (e.g. bottom border for taskbar icons at y=960-990) and the 25-unit tick marks to find the exact center [x, y].
-   - Windows taskbar icons at the bottom are spaced ~23-25 units apart. Use the bottom ticks to avoid clicking between or adjacent to icons.
+   - Locate the visual boundaries of your target element.
+   - Use the nearest border ruler (e.g. bottom border for taskbar icons at y=960-990) and tick marks to find the center [x, y].
+   - For small or dense targets, ALWAYS prefer `precision_click(x, y, target_description)`.
 2. Form Input & Focus:
    - Before typing into any text input or search bar, you MUST click inside it first to ensure it has focus.
    - Set press_enter=True when submitting a search query or command.
-3. Closed-Loop Visual Feedback:
-   - If a red bullseye marker is visible labeled "LAST CLICK: [x=..., y=...]", it shows your previous click's exact location.
-   - Use this feedback to see if the element was clicked or if your click was slightly off, and immediately calibrate your next action.
-4. Window Management & Switching:
-   - When the user asks to switch to, open, or click an application window that is already open (e.g. "click on minecraft"), ALWAYS prefer calling `focus_window(window_title)` (e.g. `focus_window("Minecraft")`).
-   - `focus_window` automatically restores the window, brings it to the top, and clicks inside it to capture mouse/keyboard focus with 100% precision.
-5. 3D Games & Camera Rotation (Minecraft, etc.):
+3. Window Management & Switching:
+   - When asked to switch to, open, or click an application window that is already open, ALWAYS prefer calling `focus_window(window_title)` (e.g. `focus_window("Minecraft")` or `focus_window("Calculator")`).
+4. 3D Games & Camera Rotation (Minecraft, etc.):
    - Once a 3D game window is focused and active:
-     - To look around or turn the camera: Use `game_look(direction="left"|"right"|"up"|"down", degrees=45)` or `mouse_move_relative(dx, dy)`.
-       Do NOT use `move_mouse(x, y)` for 3D camera control, because 3D games lock the cursor and require relative hardware mouse deltas!
+     - To look around or turn the camera: Use `game_look(direction="left"|"right"|"up"|"down", degrees=45)` or `mouse_move_relative(dx, dy)`. Never use `move_mouse` for 3D games!
      - To walk or move: Use `hold_key(key="w", duration=1.5)` (or "a", "s", "d").
-     - To walk safely and prevent falling into lava or off ledges in Minecraft: Use `hold_key(key="shift", duration=...)` to sneak.
-     - To jump or swim up: Use `hold_key(key="space", duration=0.3)`.
-6. Step-by-Step Reasoning:
-   In your reasoning, state:
-   - Target: [Element name / Action]
-   - Estimated position: [x, y] (0-1000 scale) if clicking
-   - Action: [Tool to execute]
-   Then execute the tool.
-7. Completion:
+     - To sneak/avoid falling in Minecraft: Use `hold_key(key="shift", duration=...)`.
+     - To jump: Use `hold_key(key="space", duration=0.3)`.
+5. Completion:
    - When the objective is achieved, call `finish_task(summary, success=True)` immediately.
 """
 
@@ -359,18 +359,21 @@ class GeminiAgent:
             self.emit("step_start", {"step": self.current_step, "max_steps": self.max_steps})
 
             # 1. Capture screen
+            # 1. Capture screen & current mouse cursor position
             try:
                 raw_screenshot = controller.take_screenshot()
+                current_cursor = controller.get_mouse_position()
             except Exception as e:
                 self.emit("error", {"message": f"Failed to capture screenshot: {e}"})
                 break
 
-            # 2. Add visual grounding grid overlay if enabled
+            # 2. Add visual grounding grid overlay & synthetic cursor crosshair if enabled
             if settings.GRID_OVERLAY:
                 processed_img = VisualGrounding.draw_coordinate_grid(
                     raw_screenshot,
                     grid_step=100,
-                    last_action_coord=last_action_coord
+                    last_action_coord=last_action_coord,
+                    current_mouse_coord=current_cursor,
                 )
             else:
                 processed_img = raw_screenshot
@@ -378,7 +381,7 @@ class GeminiAgent:
             opt_img = VisualGrounding.optimize_image(
                 processed_img,
                 max_width=settings.SCREENSHOT_MAX_WIDTH,
-                quality=90
+                quality=80
             )
             jpeg_bytes = opt_img.bytes
             orig_w, orig_h = opt_img.orig_size
@@ -391,7 +394,7 @@ class GeminiAgent:
                 "resolution": f"{orig_w}x{orig_h}"
             })
 
-            # 3. Construct prompt content with open windows context
+            # 3. Construct prompt content with open windows and cursor context
             image_part = types.Part.from_bytes(
                 data=jpeg_bytes,
                 mime_type="image/jpeg"
@@ -406,10 +409,14 @@ class GeminiAgent:
             except Exception:
                 pass
 
+            cur_nx = int(round(current_cursor[0] / float(orig_w) * 1000.0)) if orig_w > 0 else 0
+            cur_ny = int(round(current_cursor[1] / float(orig_h) * 1000.0)) if orig_h > 0 else 0
+
             step_prompt = (
                 f"CURRENT GOAL: {goal}\n"
                 f"STEP: {self.current_step} / {self.max_steps}\n"
                 f"DISPLAY RESOLUTION: {orig_w}x{orig_h}\n"
+                f"CURRENT CURSOR POSITION: ({current_cursor[0]}, {current_cursor[1]}) [Normalized: x={cur_nx}, y={cur_ny}] (marked with cyan crosshairs 'CURSOR: [x,y]' on screen)\n"
             )
             if open_wins:
                 step_prompt += f"OPEN APPLICATION WINDOWS: {', '.join(open_wins[:6])}\n"
@@ -417,9 +424,11 @@ class GeminiAgent:
                 step_prompt += f"PREVIOUS ACTION EXECUTED: {last_fn_name} -> Output: {last_tool_output or 'Done'}\n"
 
             step_prompt += (
-                "Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale with rulers on ALL 4 borders (top, bottom, left, right) and ticks every 25 units.\n"
-                "To switch to/focus any open application, call focus_window(window_title). For taskbar icons (y: 960-990), align using the bottom border ticks.\n"
-                "FOR 3D GAMES (Minecraft, etc.): To look around, use game_look(direction, degrees) or mouse_move_relative(dx, dy). To walk, use hold_key(key, duration). Never use move_mouse for 3D camera control."
+                "Observe the desktop screenshot. Coordinates use a 0-1000 normalized scale with border rulers and ticks every 25 units.\n"
+                "- SUB-PIXEL PRECISION: For small buttons, icons, checkboxes, or tabs, call precision_click(x, y, target_description) for automatic Two-Stage Crop & Zoom!\n"
+                "- RELATIVE MOVEMENTS: Use move_by(dx, dy) or click_by(dx, dy) to nudge or click relative to the visible CURSOR.\n"
+                "- To switch to/focus any open application, call focus_window(window_title).\n"
+                "- FOR 3D GAMES (Minecraft, etc.): To look around, use game_look(direction, degrees) or mouse_move_relative(dx, dy). Never use move_mouse for 3D camera control."
             )
 
             base_payload = [image_part, step_prompt]
@@ -489,44 +498,6 @@ class GeminiAgent:
             fn_name = fn_call.name
             fn_args = dict(fn_call.args) if fn_call.args else {}
 
-            self.emit("action_proposed", {
-                "step": self.current_step,
-                "tool": fn_name,
-                "arguments": fn_args,
-            })
-
-            # Check if this is finish_task
-            if fn_name == "finish_task":
-                summary = fn_args.get("summary", "Task concluded.")
-                success = fn_args.get("success", True)
-                self.status = AgentStatus.FINISHED
-                self.emit("task_completed", {"summary": summary, "success": success})
-                break
-
-            # If step-by-step confirmation is enabled
-            if require_approval:
-                self.status = AgentStatus.AWAITING_APPROVAL
-                self.pending_approval_tool = {"tool": fn_name, "args": fn_args}
-                self.approval_event.clear()
-                self.emit("status_change", {"status": self.status.value, "pending": self.pending_approval_tool})
-
-                # Wait for user approval
-                self.approval_event.wait()
-                if self.stop_requested:
-                    break
-
-                if not self.approval_result:
-                    self.emit("log", {"level": "warning", "message": f"Action '{fn_name}' was skipped/rejected by user."})
-                    self.status = AgentStatus.RUNNING
-                    self.emit("status_change", {"status": self.status.value})
-                    time.sleep(0.5)
-                    last_fn_name = fn_name
-                    last_tool_output = "Action skipped by user request."
-                    continue
-
-                self.status = AgentStatus.RUNNING
-                self.emit("status_change", {"status": self.status.value})
-
             # Automatic coordinate translation & scaling between sent image, 0-1000 scale, and physical screen
             scale_x = orig_w / float(sent_w) if sent_w > 0 else 1.0
             scale_y = orig_h / float(sent_h) if sent_h > 0 else 1.0
@@ -559,16 +530,158 @@ class GeminiAgent:
                 except Exception:
                     return raw_x, raw_y
 
+            # Compute predicted coordinates for visual click echo
+            pred_x, pred_y = None, None
+            if "x" in fn_args and "y" in fn_args:
+                try:
+                    pred_x, pred_y = adjust_coords(fn_args["x"], fn_args["y"])
+                except Exception:
+                    pass
+            elif "from_x" in fn_args and "from_y" in fn_args:
+                try:
+                    pred_x, pred_y = adjust_coords(fn_args["from_x"], fn_args["from_y"])
+                except Exception:
+                    pass
+            elif fn_name in ("move_by", "click_by"):
+                try:
+                    cx, cy = controller.get_mouse_position()
+                    pred_x = max(0, min(cx + int(round(float(fn_args.get("dx", 0)))), orig_w - 1))
+                    pred_y = max(0, min(cy + int(round(float(fn_args.get("dy", 0)))), orig_h - 1))
+                except Exception:
+                    pass
+
+            self.emit("action_proposed", {
+                "step": self.current_step,
+                "tool": fn_name,
+                "arguments": fn_args,
+                "predicted_x": pred_x,
+                "predicted_y": pred_y,
+            })
+
+            # Check if this is finish_task
+            if fn_name == "finish_task":
+                summary = fn_args.get("summary", "Task concluded.")
+                success = fn_args.get("success", True)
+                self.status = AgentStatus.FINISHED
+                self.emit("task_completed", {"summary": summary, "success": success})
+                break
+
+            # If step-by-step confirmation is enabled
+            if require_approval:
+                self.status = AgentStatus.AWAITING_APPROVAL
+                self.pending_approval_tool = {
+                    "tool": fn_name,
+                    "args": fn_args,
+                    "predicted_x": pred_x,
+                    "predicted_y": pred_y,
+                }
+                self.approval_event.clear()
+                self.emit("status_change", {"status": self.status.value, "pending": self.pending_approval_tool})
+
+                # Wait for user approval
+                self.approval_event.wait()
+                if self.stop_requested:
+                    break
+
+                if not self.approval_result:
+                    self.emit("log", {"level": "warning", "message": f"Action '{fn_name}' was skipped/rejected by user."})
+                    self.status = AgentStatus.RUNNING
+                    self.emit("status_change", {"status": self.status.value})
+                    time.sleep(0.5)
+                    last_fn_name = fn_name
+                    last_tool_output = "Action skipped by user request."
+                    continue
+
+                self.status = AgentStatus.RUNNING
+                self.emit("status_change", {"status": self.status.value})
+
+            # Coordinate adjustments before dispatch & Stage 2 Execution
             if fn_name in ("mouse_click", "mouse_double_click", "move_mouse", "mouse_right_click"):
                 if "x" in fn_args and "y" in fn_args:
                     fn_args["x"], fn_args["y"] = adjust_coords(fn_args["x"], fn_args["y"])
                     last_action_coord = (int(fn_args["x"]), int(fn_args["y"]))
+            elif fn_name == "precision_click":
+                # Two-Stage Crop & Zoom execution:
+                approx_x, approx_y = adjust_coords(fn_args.get("x", 500), fn_args.get("y", 500))
+                target_desc = str(fn_args.get("target_description", "target element"))
+                btn = fn_args.get("button", "left")
+                clicks = int(fn_args.get("clicks", 1))
+
+                self.emit("log", {
+                    "level": "info",
+                    "message": f"Stage 2 (Crop & Zoom): Pinpointing '{target_desc}' with 0-100 microgrid near ({approx_x}, {approx_y})..."
+                })
+
+                try:
+                    crop_base = controller.take_screenshot()
+                    zoom_img, crop_bounds = VisualGrounding.create_zoom_crop(
+                        crop_base, approx_x, approx_y, box_size=300
+                    )
+                    zoom_opt = VisualGrounding.optimize_image(zoom_img, max_width=300, quality=80)
+                    zoom_b64 = VisualGrounding.to_base64_data_url(zoom_opt.bytes)
+
+                    self.emit("zoom_crop_preview", {
+                        "step": self.current_step,
+                        "data_url": zoom_b64,
+                        "target": target_desc,
+                        "center": [approx_x, approx_y],
+                        "bounds": crop_bounds,
+                    })
+
+                    stage2_prompt = (
+                        f"You are performing Stage 2 Crop & Zoom sub-pixel targeting for: '{target_desc}'.\n"
+                        f"This is a 300x300px zoomed crop around screen position ({approx_x}, {approx_y}) overlaid with a fine 0-100 micro-grid.\n"
+                        f"- u: 0 = left border, 100 = right border. Amber vertical line is u=50.\n"
+                        f"- v: 0 = top border, 100 = bottom border. Amber horizontal line is v=50.\n"
+                        f"Locate the exact center of the target '{target_desc}'.\n"
+                        f"Respond strictly in JSON format: {{\"u\": <0-100 integer>, \"v\": <0-100 integer>}}\n"
+                        f"Example: {{\"u\": 48, \"v\": 52}}"
+                    )
+
+                    stage2_img_part = types.Part.from_bytes(data=zoom_opt.bytes, mime_type="image/jpeg")
+                    rate_limiter.wait_for_slot()
+                    stage2_resp = client.models.generate_content(
+                        model=active_model,
+                        contents=[stage2_img_part, stage2_prompt],
+                        config=types.GenerateContentConfig(
+                            temperature=0.0,
+                            response_mime_type="application/json",
+                        )
+                    )
+                    stage2_text = stage2_resp.text or "{}"
+                    try:
+                        coords = json.loads(stage2_text)
+                        u = float(coords.get("u", 50))
+                        v = float(coords.get("v", 50))
+                    except Exception:
+                        m_u = re.search(r'"u"\s*:\s*([0-9\.]+)', stage2_text)
+                        m_v = re.search(r'"v"\s*:\s*([0-9\.]+)', stage2_text)
+                        u = float(m_u.group(1)) if m_u else 50.0
+                        v = float(m_v.group(1)) if m_v else 50.0
+
+                    final_x, final_y = VisualGrounding.microgrid_to_screen_coords(u, v, crop_bounds)
+                    fn_args["x"] = final_x
+                    fn_args["y"] = final_y
+                    last_action_coord = (final_x, final_y)
+                    self.emit("log", {
+                        "level": "info",
+                        "message": f"Stage 2 resolved '{target_desc}' at micro-grid [u={u:.1f}, v={v:.1f}] -> Screen ({final_x}, {final_y})"
+                    })
+                except Exception as ex:
+                    logger.warning(f"Stage 2 crop & zoom fallback: {ex}")
+                    fn_args["x"] = approx_x
+                    fn_args["y"] = approx_y
+                    last_action_coord = (approx_x, approx_y)
+
             elif fn_name == "drag_and_drop":
                 if "from_x" in fn_args and "from_y" in fn_args:
                     fn_args["from_x"], fn_args["from_y"] = adjust_coords(fn_args["from_x"], fn_args["from_y"])
                 if "to_x" in fn_args and "to_y" in fn_args:
                     fn_args["to_x"], fn_args["to_y"] = adjust_coords(fn_args["to_x"], fn_args["to_y"])
                     last_action_coord = (int(fn_args["to_x"]), int(fn_args["to_y"]))
+            elif fn_name in ("move_by", "click_by"):
+                # Track mouse coordinate after relative action
+                pass
             elif fn_name == "scroll_screen":
                 if fn_args.get("x", 0) > 0 or fn_args.get("y", 0) > 0:
                     fn_args["x"], fn_args["y"] = adjust_coords(fn_args.get("x", 0), fn_args.get("y", 0))

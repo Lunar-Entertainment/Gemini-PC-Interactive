@@ -24,6 +24,8 @@
   const viewportWrapper = document.getElementById("viewportWrapper");
   const crosshairMarker = document.getElementById("crosshairMarker");
   const clickPulse = document.getElementById("clickPulse");
+  const predictedClickReticle = document.getElementById("predictedClickReticle");
+  const reticleTag = document.getElementById("reticleTag");
   const liveMouseCoords = document.getElementById("liveMouseCoords");
 
   const inputGoal = document.getElementById("inputGoal");
@@ -151,8 +153,14 @@
         updateStatus(data.status);
         if (data.status === "AWAITING_APPROVAL" && data.pending) {
           showApprovalBanner(data.pending);
+          if (data.pending.predicted_x !== undefined && data.pending.predicted_y !== undefined && data.pending.predicted_x !== null && data.pending.predicted_y !== null) {
+            showPredictedReticle(data.pending.predicted_x, data.pending.predicted_y, `TARGET: (${Math.round(data.pending.predicted_x)}, ${Math.round(data.pending.predicted_y)})`, true);
+          }
         } else {
           hideApprovalBanner();
+          if (data.status !== "RUNNING" && data.status !== "AWAITING_APPROVAL") {
+            hidePredictedReticle();
+          }
         }
         break;
 
@@ -180,10 +188,17 @@
 
       case "action_proposed":
         addFeedItem("action", `PROPOSED: ${data.tool}`, JSON.stringify(data.arguments, null, 2));
+        if (data.predicted_x !== undefined && data.predicted_y !== undefined && data.predicted_x !== null && data.predicted_y !== null) {
+          showPredictedReticle(data.predicted_x, data.predicted_y, `${data.tool} (${Math.round(data.predicted_x)}, ${Math.round(data.predicted_y)})`, false);
+        }
+        break;
+
+      case "zoom_crop_preview":
+        renderZoomCropCard(data);
         break;
 
       case "action_executing":
-        // Flash pulse if coordinate click
+        // Flash pulse and shockwave if coordinate click
         if (data.args && data.args.x !== undefined && data.args.y !== undefined) {
           triggerVisualClick(data.args.x, data.args.y);
         }
@@ -295,6 +310,54 @@
     feedList.scrollTop = feedList.scrollHeight;
   }
 
+  let reticleTimeout = null;
+
+  function showPredictedReticle(screenX, screenY, label, isPendingApproval = false) {
+    if (!predictedClickReticle || screenX === undefined || screenX === null || screenY === undefined || screenY === null) return;
+
+    const targetPxX = Number(screenX);
+    const targetPxY = Number(screenY);
+
+    const imgRect = desktopScreen.getBoundingClientRect();
+    const wrapRect = viewportWrapper.getBoundingClientRect();
+
+    const scaleX = imgRect.width / screenNaturalWidth;
+    const scaleY = imgRect.height / screenNaturalHeight;
+
+    const posX = (imgRect.left - wrapRect.left) + (targetPxX * scaleX);
+    const posY = (imgRect.top - wrapRect.top) + (targetPxY * scaleY);
+
+    predictedClickReticle.style.left = `${posX}px`;
+    predictedClickReticle.style.top = `${posY}px`;
+
+    if (reticleTag) {
+      reticleTag.textContent = label || `(${Math.round(targetPxX)}, ${Math.round(targetPxY)})`;
+    }
+
+    predictedClickReticle.classList.remove("hidden", "shockwave");
+
+    if (isPendingApproval) {
+      predictedClickReticle.classList.add("awaiting-approval");
+      clearTimeout(reticleTimeout);
+    } else {
+      predictedClickReticle.classList.remove("awaiting-approval");
+      clearTimeout(reticleTimeout);
+      reticleTimeout = setTimeout(() => {
+        if (agentStatus !== "AWAITING_APPROVAL") {
+          predictedClickReticle.classList.add("hidden");
+        }
+      }, 2400);
+    }
+  }
+
+  function hidePredictedReticle() {
+    if (predictedClickReticle) {
+      predictedClickReticle.classList.add("hidden");
+      predictedClickReticle.classList.remove("awaiting-approval");
+    }
+    clearTimeout(reticleTimeout);
+  }
+
   function showApprovalBanner(pending) {
     approvalActionText.textContent = `Gemini wants to: ${pending.tool}(${JSON.stringify(pending.args)})`;
     approvalBanner.classList.remove("hidden");
@@ -305,18 +368,64 @@
   }
 
   function triggerVisualClick(actualX, actualY) {
-    const rect = desktopScreen.getBoundingClientRect();
-    const scaleX = rect.width / screenNaturalWidth;
-    const scaleY = rect.height / screenNaturalHeight;
+    const imgRect = desktopScreen.getBoundingClientRect();
+    const wrapRect = viewportWrapper.getBoundingClientRect();
+    const scaleX = imgRect.width / screenNaturalWidth;
+    const scaleY = imgRect.height / screenNaturalHeight;
 
-    const clientX = rect.left + actualX * scaleX;
-    const clientY = rect.top + actualY * scaleY;
+    const clientX = (imgRect.left - wrapRect.left) + (actualX * scaleX);
+    const clientY = (imgRect.top - wrapRect.top) + (actualY * scaleY);
 
     clickPulse.style.left = `${clientX}px`;
     clickPulse.style.top = `${clientY}px`;
     clickPulse.classList.remove("animate");
     void clickPulse.offsetWidth; // Trigger reflow
     clickPulse.classList.add("animate");
+
+    if (predictedClickReticle) {
+      predictedClickReticle.classList.remove("awaiting-approval");
+      predictedClickReticle.classList.add("shockwave");
+      setTimeout(() => {
+        hidePredictedReticle();
+      }, 400);
+    }
+  }
+
+  function renderZoomCropCard(data) {
+    const item = document.createElement("div");
+    item.className = "feed-item action-card";
+
+    const header = document.createElement("div");
+    header.className = "item-header";
+
+    const badge = document.createElement("span");
+    badge.className = "badge badge-action";
+    badge.textContent = "STAGE 2 CROP & ZOOM";
+
+    const timeSpan = document.createElement("span");
+    timeSpan.className = "timestamp";
+    timeSpan.textContent = new Date().toLocaleTimeString();
+
+    header.appendChild(badge);
+    header.appendChild(timeSpan);
+    item.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "item-body";
+    body.innerHTML = `
+      <div class="zoom-crop-card">
+        <img src="${data.data_url}" alt="Zoom Micro-Grid Crop" class="zoom-crop-img">
+        <div class="zoom-crop-info">
+          <div class="zoom-crop-title">Sub-Pixel Focus: <strong>${data.target || "Element"}</strong></div>
+          <div class="zoom-crop-meta">300x300px crop with 0-100 microgrid</div>
+          <div class="zoom-crop-meta">Center: (${data.center ? data.center.join(', ') : 'unknown'})</div>
+        </div>
+      </div>
+    `;
+
+    item.appendChild(body);
+    feedList.appendChild(item);
+    feedList.scrollTop = feedList.scrollHeight;
   }
 
   // Viewport Mouse Tracking & Interactive Coordinates
@@ -401,11 +510,15 @@
 
   btnApprove.addEventListener("click", () => {
     hideApprovalBanner();
+    if (predictedClickReticle) {
+      predictedClickReticle.classList.remove("awaiting-approval");
+    }
     sendWs({ action: "approve", approved: true });
   });
 
   btnReject.addEventListener("click", () => {
     hideApprovalBanner();
+    hidePredictedReticle();
     sendWs({ action: "approve", approved: false });
   });
 

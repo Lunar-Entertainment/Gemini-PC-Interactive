@@ -32,6 +32,56 @@ class DesktopTools:
         return f"Double clicked at ({x}, {y})"
 
     @staticmethod
+    def precision_click(x: int, y: int, target_description: str, button: str = "left", clicks: int = 1) -> str:
+        """
+        Executes a Two-Stage 'Crop & Zoom' click for sub-pixel accuracy on dense desktop apps, tiny buttons,
+        icons, links, checkboxes, or tabs.
+        Stage 1: Predicts approximate area (x, y) on the 0-1000 scale.
+        Stage 2: Automatically crops a 300x300px box around that area, overlays a fine 0-100 micro-grid,
+        and uses Gemini Flash to determine the exact sub-pixel target center before clicking.
+
+        Args:
+            x: Approximate horizontal coordinate on a 0-1000 scale (0 = left, 1000 = right).
+            y: Approximate vertical coordinate on a 0-1000 scale (0 = top, 1000 = bottom).
+            target_description: Short visual description of what element to pinpoint inside the zoom crop (e.g. 'Calculator multiply button', 'Save icon', 'File menu', 'checkbox').
+            button: 'left' or 'right'. Default is 'left'.
+            clicks: 1 for single click, 2 for double click.
+        """
+        controller.mouse_click(x=x, y=y, button=button, clicks=clicks)
+        return f"Precision clicked '{target_description}' at ({x}, {y})"
+
+    @staticmethod
+    def move_by(dx: int, dy: int) -> str:
+        """
+        Moves the mouse cursor by relative offset (dx, dy) pixels from its CURRENT position.
+        The current cursor position is visible on screen with the cyan crosshair badge 'CURSOR: [x, y]'.
+        Use move_by when you want to nudge or adjust the mouse pointer relative to where it is right now.
+
+        Args:
+            dx: Horizontal pixel offset (negative = move left, positive = move right).
+            dy: Vertical pixel offset (negative = move up, positive = move down).
+        """
+        controller.move_by(dx=dx, dy=dy)
+        pos = controller.get_mouse_position()
+        return f"Moved cursor by (dx={dx}, dy={dy}) to new position {pos}"
+
+    @staticmethod
+    def click_by(dx: int, dy: int, button: str = "left", clicks: int = 1) -> str:
+        """
+        Moves the mouse cursor by relative offset (dx, dy) pixels from its CURRENT position and clicks.
+        Use this when the cyan cursor crosshair is near the target button and you want to nudge and click.
+
+        Args:
+            dx: Horizontal pixel offset (negative = left, positive = right).
+            dy: Vertical pixel offset (negative = up, positive = down).
+            button: 'left' or 'right'. Default is 'left'.
+            clicks: 1 for single click, 2 for double click.
+        """
+        controller.click_by(dx=dx, dy=dy, button=button, clicks=clicks)
+        pos = controller.get_mouse_position()
+        return f"Shifted cursor by ({dx}, {dy}) to {pos} and clicked {button} button (clicks: {clicks})"
+
+    @staticmethod
     def move_mouse(x: int, y: int) -> str:
         """
         Moves the mouse cursor to (x, y) without clicking.
@@ -243,8 +293,11 @@ class DesktopTools:
 # Function list for Gemini Tool registration
 ALL_DESKTOP_FUNCTIONS = [
     DesktopTools.mouse_click,
+    DesktopTools.precision_click,
     DesktopTools.mouse_double_click,
     DesktopTools.move_mouse,
+    DesktopTools.move_by,
+    DesktopTools.click_by,
     DesktopTools.mouse_move_relative,
     DesktopTools.game_look,
     DesktopTools.drag_and_drop,

@@ -240,10 +240,17 @@ async def set_api_key(req: ApiKeyRequest):
 
 @app.get("/api/screenshot")
 async def get_screenshot(grid: bool = False):
-    img = controller.take_screenshot()
+    img = await asyncio.to_thread(controller.take_screenshot)
     if grid or settings.GRID_OVERLAY:
-        img = VisualGrounding.draw_coordinate_grid(img, grid_step=100)
-    opt = VisualGrounding.optimize_image(img, max_width=1920, quality=85)
+        mouse_pos = await asyncio.to_thread(controller.get_mouse_position)
+        img = await asyncio.to_thread(
+            VisualGrounding.draw_coordinate_grid,
+            img,
+            100,
+            None,
+            mouse_pos
+        )
+    opt = await asyncio.to_thread(VisualGrounding.optimize_image, img, 1920, 80)
     return Response(content=opt.bytes, media_type="image/jpeg")
 
 async def mjpeg_generator(fps: int = 1):
@@ -251,8 +258,8 @@ async def mjpeg_generator(fps: int = 1):
     interval = 1.0
     while True:
         try:
-            img = controller.take_screenshot()
-            opt = VisualGrounding.optimize_image(img, max_width=1280, quality=60)
+            img = await asyncio.to_thread(controller.take_screenshot)
+            opt = await asyncio.to_thread(VisualGrounding.optimize_image, img, 1280, 60)
             yield (
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + opt.bytes + b"\r\n"

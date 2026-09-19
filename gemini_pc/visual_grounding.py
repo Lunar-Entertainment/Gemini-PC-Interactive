@@ -44,7 +44,7 @@ class VisualGrounding:
     def optimize_image(
         img: Image.Image,
         max_width: int = 1920,
-        quality: int = 90
+        quality: int = 80
     ) -> OptimizedImage:
         """
         Resizes screenshot if needed and encodes to JPEG bytes.
@@ -73,12 +73,14 @@ class VisualGrounding:
         cls,
         img: Image.Image,
         grid_step: int = 100,
-        last_action_coord: Optional[Tuple[int, int]] = None
+        last_action_coord: Optional[Tuple[int, int]] = None,
+        current_mouse_coord: Optional[Tuple[int, int]] = None,
     ) -> Image.Image:
         """
         Draws an ultra-high-precision 0-1000 normalized coordinate system overlay.
         Rulers along ALL 4 BORDERS (Top, Bottom, Left, Right) with 25-unit tick marks provide
         pinpoint references everywhere on screen, especially for taskbar icons and bottom buttons.
+        Renders the current mouse cursor location and last action marker for closed-loop visual grounding.
         """
         canvas = img.copy()
         draw = ImageDraw.Draw(canvas, "RGBA")
@@ -213,7 +215,141 @@ class VisualGrounding:
                 )
                 draw.text((tag_x + 1, tag_y + 1), tag, fill=(255, 255, 255, 255), font=font_bold)
 
+        # 6. Prominent Synthetic Mouse Cursor Crosshair & Coordinate Badge
+        if current_mouse_coord:
+            mx, my = current_mouse_coord
+            if 0 <= mx < w and 0 <= my < h:
+                mnx = int(round(mx / float(w) * 1000.0))
+                mny = int(round(my / float(h) * 1000.0))
+
+                # Outer crosshair circle in vibrant cyan
+                cr = 14
+                draw.ellipse([(mx - cr, my - cr), (mx + cr, my + cr)], outline=(6, 182, 212, 240), width=2)
+                # Inner targeting circle
+                cr_in = 5
+                draw.ellipse([(mx - cr_in, my - cr_in), (mx + cr_in, my + cr_in)], outline=(255, 255, 255, 255), width=2)
+                # Center point
+                draw.ellipse([(mx - 2, my - 2), (mx + 2, my + 2)], fill=(6, 182, 212, 255))
+                # 4-way crosshair lines extending outward
+                draw.line([(mx - 22, my), (mx - 6, my)], fill=(6, 182, 212, 240), width=2)
+                draw.line([(mx + 6, my), (mx + 22, my)], fill=(6, 182, 212, 240), width=2)
+                draw.line([(mx, my - 22), (mx, my - 6)], fill=(6, 182, 212, 240), width=2)
+                draw.line([(mx, my + 6), (mx, my + 22)], fill=(6, 182, 212, 240), width=2)
+
+                # Cursor badge: CURSOR: [x=..., y=...]
+                cur_tag = f"CURSOR: [{mnx}, {mny}]"
+                cbox = font_bold.getbbox(cur_tag)
+                ctw, cth = cbox[2] - cbox[0], cbox[3] - cbox[1]
+                cur_x = min(max(mx + 14, 4), w - ctw - 8)
+                cur_y = my + 14 if my <= h - 45 else my - 30
+                draw.rectangle(
+                    [(cur_x - 3, cur_y - 2), (cur_x + ctw + 5, cur_y + cth + 4)],
+                    fill=(8, 47, 73, 235),
+                    outline=(6, 182, 212, 220)
+                )
+                draw.text((cur_x + 1, cur_y + 1), cur_tag, fill=(103, 232, 249, 255), font=font_bold)
+
         return canvas
+
+    @classmethod
+    def create_zoom_crop(
+        cls,
+        img: Image.Image,
+        center_x: int,
+        center_y: int,
+        box_size: int = 300,
+    ) -> Tuple[Image.Image, Tuple[int, int, int, int]]:
+        """
+        Extracts a box_size x box_size (default 300x300) crop centered at (center_x, center_y) in physical pixels.
+        Overlays a fine 0-100 micro-grid with tick marks every 5 units, major lines every 10 units,
+        and border rulers for Stage 2 sub-pixel accuracy targeting.
+        Returns (cropped_with_grid, (crop_x1, crop_y1, crop_x2, crop_y2)).
+        """
+        w, h = img.size
+        half = box_size // 2
+
+        # Boundary clamped crop rectangle
+        x1 = max(0, min(center_x - half, w - box_size))
+        y1 = max(0, min(center_y - half, h - box_size))
+        x2 = min(w, x1 + box_size)
+        y2 = min(h, y1 + box_size)
+
+        crop = img.crop((x1, y1, x2, y2)).copy()
+        draw = ImageDraw.Draw(crop, "RGBA")
+        cw, ch = crop.size
+
+        font_micro = cls._get_font(size=9, bold=True)
+        font_header = cls._get_font(size=10, bold=True)
+
+        # Micro-grid lines (0 to 100 scale, where 1 unit = 3.0px on a 300x300 crop)
+        for u in range(10, 100, 10):
+            px = int(round(u / 100.0 * cw))
+            py = int(round(u / 100.0 * ch))
+
+            if u == 50:
+                col = (251, 191, 36, 190)  # Amber center axis
+                width = 2
+            else:
+                col = (56, 189, 248, 75)
+                width = 1
+
+            draw.line([(px, 0), (px, ch)], fill=col, width=width)
+            draw.line([(0, py), (cw, py)], fill=col, width=width)
+
+        # Minor tick marks every 5 units along borders
+        for u in range(5, 100, 5):
+            px = int(round(u / 100.0 * cw))
+            py = int(round(u / 100.0 * ch))
+            tlen = 6 if u % 10 == 0 else 3
+
+            draw.line([(px, 0), (px, tlen)], fill=(56, 189, 248, 220), width=1)
+            draw.line([(px, ch - tlen), (px, ch)], fill=(56, 189, 248, 220), width=1)
+            draw.line([(0, py), (tlen, py)], fill=(56, 189, 248, 220), width=1)
+            draw.line([(cw - tlen, py), (cw, py)], fill=(56, 189, 248, 220), width=1)
+
+        # Labeled coordinate badges every 20 units
+        for u in range(20, 100, 20):
+            px = int(round(u / 100.0 * cw))
+            py = int(round(u / 100.0 * ch))
+            lbl = f"{u}"
+            bbox = font_micro.getbbox(lbl)
+            tw = bbox[2] - bbox[0]
+            th = bbox[3] - bbox[1]
+
+            # Top label badge
+            bx = px - tw // 2
+            draw.rectangle([(bx - 2, 0), (bx + tw + 2, th + 2)], fill=(15, 23, 42, 230), outline=(56, 189, 248, 140))
+            draw.text((bx, 0), lbl, fill=(253, 224, 71, 255), font=font_micro)
+
+            # Left label badge
+            by = py - th // 2
+            draw.rectangle([(0, by - 1), (tw + 4, by + th + 2)], fill=(15, 23, 42, 230), outline=(56, 189, 248, 140))
+            draw.text((2, by), lbl, fill=(253, 224, 71, 255), font=font_micro)
+
+        # Center bullseye reticle at [50, 50]
+        cx = int(round(0.5 * cw))
+        cy = int(round(0.5 * ch))
+        draw.ellipse([(cx - 8, cy - 8), (cx + 8, cy + 8)], outline=(251, 191, 36, 220), width=2)
+        draw.ellipse([(cx - 2, cy - 2), (cx + 2, cy + 2)], fill=(251, 191, 36, 255))
+
+        # Header tag
+        hdr = "STAGE 2 MICRO-GRID (0-100)"
+        hbbox = font_header.getbbox(hdr)
+        htw, hth = hbbox[2] - hbbox[0], hbbox[3] - hbbox[1]
+        draw.rectangle([(cw - htw - 8, ch - hth - 6), (cw, ch)], fill=(15, 23, 42, 230), outline=(56, 189, 248, 120))
+        draw.text((cw - htw - 4, ch - hth - 5), hdr, fill=(56, 189, 248, 255), font=font_header)
+
+        return crop, (x1, y1, x2, y2)
+
+    @staticmethod
+    def microgrid_to_screen_coords(u: float, v: float, crop_bounds: Tuple[int, int, int, int]) -> Tuple[int, int]:
+        """Maps micro-grid (0-100) coordinates back to physical screen pixels."""
+        x1, y1, x2, y2 = crop_bounds
+        u_clamped = max(0.0, min(float(u), 100.0))
+        v_clamped = max(0.0, min(float(v), 100.0))
+        px = int(round(x1 + (u_clamped / 100.0) * (x2 - x1)))
+        py = int(round(y1 + (v_clamped / 100.0) * (y2 - y1)))
+        return px, py
 
     @staticmethod
     def to_base64_data_url(jpeg_bytes: bytes) -> str:

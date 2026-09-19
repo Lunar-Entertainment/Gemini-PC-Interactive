@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import threading
 import subprocess
 import ctypes
 from ctypes import wintypes
@@ -16,21 +17,26 @@ pyautogui.PAUSE = 0.02     # Ultra-minimal delay between actions for maximum spe
 
 class DesktopAttacher:
     """Ensures the calling thread is attached to the interactive desktop and sets DPI awareness."""
-    _initialized = False
+    _thread_local = threading.local()
+    _process_dpi_set = False
 
     @classmethod
     def ensure_desktop_access(cls):
         if sys.platform != "win32":
             return
+        if getattr(cls._thread_local, "attached", False):
+            return
 
-        try:
-            # Set Per-Monitor DPI Awareness v2
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
-        except Exception:
+        if not cls._process_dpi_set:
             try:
-                ctypes.windll.user32.SetProcessDPIAware()
+                # Set Per-Monitor DPI Awareness v2
+                ctypes.windll.shcore.SetProcessDpiAwareness(2)
             except Exception:
-                pass
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()
+                except Exception:
+                    pass
+            cls._process_dpi_set = True
 
         try:
             user32 = ctypes.windll.user32
@@ -40,10 +46,10 @@ class DesktopAttacher:
                 hdesk = user32.OpenInputDesktop(0, False, 0x10000000 | 0x01FF)
             if hdesk:
                 user32.SetThreadDesktop(hdesk)
-        except Exception as e:
+        except Exception:
             # Non-fatal if already in correct desktop
             pass
-        cls._initialized = True
+        cls._thread_local.attached = True
 
 
 class PCController:
@@ -201,6 +207,20 @@ class PCController:
             time.sleep(dur)
         finally:
             pyautogui.keyUp(actual_key)
+
+    def move_by(self, dx: int, dy: int, duration: float = 0.02):
+        """Moves mouse cursor relative to current position by (dx, dy) pixels on the desktop."""
+        DesktopAttacher.ensure_desktop_access()
+        cx, cy = self.get_mouse_position()
+        sw, sh = self.get_screen_size()
+        target_x = max(0, min(cx + int(round(dx)), sw - 1))
+        target_y = max(0, min(cy + int(round(dy)), sh - 1))
+        pyautogui.moveTo(target_x, target_y, duration=duration)
+
+    def click_by(self, dx: int, dy: int, button: str = "left", clicks: int = 1):
+        """Moves cursor relative to current position by (dx, dy) and executes click."""
+        self.move_by(dx, dy, duration=0.02)
+        self.mouse_click(button=button, clicks=clicks)
 
     def mouse_move_relative(self, dx: int, dy: int):
         """Moves the mouse cursor by a relative delta (dx, dy).

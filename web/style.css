@@ -439,19 +439,179 @@ body {
 
 .click-pulse {
   position: absolute;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: 2px solid var(--accent-rose);
-  background: rgba(244, 63, 94, 0.2);
+  background: rgba(244, 63, 94, 0.25);
   transform: translate(-50%, -50%) scale(0);
   pointer-events: none;
   transition: transform 0.4s ease-out, opacity 0.4s ease-out;
+  z-index: 15;
 }
 
 .click-pulse.animate {
-  transform: translate(-50%, -50%) scale(1.6);
+  transform: translate(-50%, -50%) scale(1.8);
   opacity: 0;
+}
+
+/* Predicted Click Echo & Targeting Reticle */
+.predicted-reticle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.25s ease, transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.predicted-reticle.hidden {
+  display: none !important;
+}
+
+.reticle-ring {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px dashed #38bdf8;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.6), inset 0 0 8px rgba(56, 189, 248, 0.3);
+  animation: reticleSpin 6s linear infinite;
+}
+
+.reticle-pulse {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1.5px solid #06b6d4;
+  background: rgba(6, 182, 212, 0.15);
+  animation: reticlePulseAnim 1.4s ease-out infinite;
+}
+
+.reticle-crosshair-h {
+  position: absolute;
+  width: 48px;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+}
+
+.reticle-crosshair-v {
+  position: absolute;
+  width: 1.5px;
+  height: 48px;
+  background: linear-gradient(180deg, transparent, #38bdf8, transparent);
+}
+
+.reticle-dot {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 0 8px #38bdf8;
+}
+
+.reticle-tag {
+  position: absolute;
+  top: 42px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid #38bdf8;
+  color: #38bdf8;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7);
+  letter-spacing: 0.02em;
+}
+
+/* Persistent Targeting Mode for Step-by-Step Approval */
+.predicted-reticle.awaiting-approval .reticle-ring {
+  border-color: #fbbf24;
+  box-shadow: 0 0 16px rgba(251, 191, 36, 0.8), inset 0 0 10px rgba(251, 191, 36, 0.4);
+  width: 42px;
+  height: 42px;
+}
+
+.predicted-reticle.awaiting-approval .reticle-pulse {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.2);
+  animation-duration: 1.0s;
+}
+
+.predicted-reticle.awaiting-approval .reticle-tag {
+  border-color: #fbbf24;
+  color: #fbbf24;
+  background: rgba(30, 20, 5, 0.95);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.4);
+}
+
+.predicted-reticle.shockwave {
+  animation: reticleShockwave 0.5s ease-out forwards;
+}
+
+@keyframes reticleSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes reticlePulseAnim {
+  0% { transform: scale(0.85); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.5; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes reticleShockwave {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
+
+/* Zoom Preview Card in Cognitive Stream */
+.zoom-crop-card {
+  margin-top: 8px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: var(--radius-md);
+  padding: 10px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.zoom-crop-img {
+  width: 110px;
+  height: 110px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+}
+
+.zoom-crop-info {
+  flex: 1;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.zoom-crop-title {
+  color: #38bdf8;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.zoom-crop-meta {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
 }
 
 /* Quick Bar */
